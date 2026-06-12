@@ -16,8 +16,11 @@ import (
 	"github.com/go-go-golems/glazed/pkg/cmds/fields"
 	"github.com/go-go-golems/glazed/pkg/cmds/schema"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
+	"github.com/go-go-golems/go-go-goja/pkg/gojahttp"
+	"github.com/go-go-golems/go-go-goja/pkg/runtimebridge"
 	"github.com/go-go-golems/go-go-goja/pkg/tsgen/spec"
 	"github.com/go-go-golems/go-go-goja/pkg/xgoja/providerapi"
+	httpprovider "github.com/go-go-golems/go-go-goja/pkg/xgoja/providers/http"
 	"github.com/go-go-golems/go-go-objects/pkg/durableobjects"
 	"gopkg.in/yaml.v3"
 )
@@ -62,10 +65,11 @@ type settings struct {
 }
 
 type runtimeEntry struct {
-	mu      sync.Mutex
-	manager *durableobjects.Manager
-	gateway http.Handler
-	cancel  context.CancelFunc
+	mu             sync.Mutex
+	manager        *durableobjects.Manager
+	gateway        http.Handler
+	gatewayMounted bool
+	cancel         context.CancelFunc
 }
 
 type capability struct {
@@ -101,40 +105,76 @@ func (c *capability) GlazedConfigSections(providerapi.SectionRequest) ([]schema.
 	return []schema.Section{section}, nil
 }
 
+func (c *capability) XGojaConfigSection(providerapi.SectionRequest, providerapi.ModuleDescriptor) (schema.Section, error) {
+	return schema.NewSection(
+		"durableobjects-xgoja",
+		"Durable Objects xgoja config",
+		schema.WithFields(
+			fields.New("storageRoot", fields.TypeString, fields.WithDefault("./var/durable-objects")),
+			fields.New("bundlePath", fields.TypeString, fields.WithDefault("")),
+			fields.New("manifestPath", fields.TypeString, fields.WithDefault("")),
+			fields.New("bundleAsset", fields.TypeString, fields.WithDefault("")),
+			fields.New("manifestAsset", fields.TypeString, fields.WithDefault("")),
+			fields.New("cpuTimeout", fields.TypeString, fields.WithDefault("2s")),
+			fields.New("idleTimeout", fields.TypeString, fields.WithDefault("5m")),
+			fields.New("alarmInterval", fields.TypeString, fields.WithDefault("1s")),
+			fields.New("idleInterval", fields.TypeString, fields.WithDefault("1m")),
+		),
+	)
+}
+
+func (c *capability) XGojaConfigFromGlazed(_ context.Context, req providerapi.XGojaConfigRequest) (*values.SectionValues, error) {
+	out, err := values.NewSectionValues(req.ConfigSection)
+	if err != nil {
+		return nil, err
+	}
+	if req.GlazedValues == nil {
+		return out, nil
+	}
+	enabled, ok := req.GlazedValues.GetField("durableobjects", "enabled")
+	if !ok || enabled.Value != true {
+		return out, nil
+	}
+	copies := map[string]string{
+		"storage-root":   "storageRoot",
+		"bundle-path":    "bundlePath",
+		"manifest-path":  "manifestPath",
+		"cpu-timeout":    "cpuTimeout",
+		"idle-timeout":   "idleTimeout",
+		"alarm-interval": "alarmInterval",
+		"idle-interval":  "idleInterval",
+	}
+	for publicName, configName := range copies {
+		field, ok := req.GlazedValues.GetField("durableobjects", publicName)
+		if !ok {
+			continue
+		}
+		definition, ok := req.ConfigSection.GetDefinitions().Get(configName)
+		if !ok {
+			return nil, fmt.Errorf("durableobjects internal config field %s not found", configName)
+		}
+		if err := out.Fields.UpdateWithLog(configName, definition, field.Value, field.Log...); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 func defaultSettings() settings {
 	return settings{Enabled: false, StorageRoot: "./var/durable-objects", CPUTimeout: "2s", IdleTimeout: "5m", AlarmInterval: "1s", IdleInterval: "1m"}
 }
 
 func (c *capability) InitRuntimeFromSections(ctx context.Context, vals *values.Values, handle providerapi.RuntimeInitializerHandle) error {
+	_ = ctx
+	_ = vals
 	if handle == nil || handle.EngineRuntime() == nil || handle.EngineRuntime().VM == nil {
 		return fmt.Errorf("durableobjects provider runtime handle is nil")
 	}
-	cfg := defaultSettings()
-	if vals == nil {
-		return nil
-	}
-	cfg.Enabled = true
-	if err := vals.DecodeSectionInto("durableobjects", &cfg); err != nil {
-		return err
-	}
-	if !cfg.Enabled {
-		return nil
-	}
-	if cfg.BundlePath == "" {
-		return fmt.Errorf("durableobjects bundle-path is required when enabled")
-	}
+	// Configuration is unified through XGojaConfigSectionCapability and handled
+	// during module setup, where HostServices and embedded assets are available.
+	// Keep this initializer as a lifecycle cleanup hook for command paths that
+	// still invoke RuntimeInitializerCapability after runtime creation.
 	runtime := handle.EngineRuntime()
-	service, err := newGatewayServiceFromSettings(runtime.Context(), nil, cfg)
-	if err != nil {
-		return err
-	}
-	manager := service.Manager
-	entry := c.entry(runtime.VM)
-	entry.mu.Lock()
-	entry.manager = manager
-	entry.gateway = service.Handler
-	entry.mu.Unlock()
-
 	return runtime.AddCloser(func(ctx context.Context) error {
 		return c.shutdownRuntime(ctx, runtime.VM)
 	})
@@ -162,6 +202,10 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 	if err != nil {
 		return nil, err
 	}
+	httpHost, err := externalHTTPHost(ctx.Host)
+	if err != nil {
+		return nil, err
+	}
 	return func(vm *goja.Runtime, moduleObj *goja.Object) {
 		entry := c.entry(vm)
 		entry.mu.Lock()
@@ -175,6 +219,13 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			manager = external.Manager
 			entry.manager = manager
 			entry.gateway = external.Handler
+		}
+		if manager != nil && httpHost != nil && !entry.gatewayMounted {
+			if entry.gateway == nil {
+				entry.gateway = durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true})
+			}
+			mountGatewayOnHTTPHost(httpHost, entry.gateway)
+			entry.gatewayMounted = true
 		}
 		entry.mu.Unlock()
 
@@ -191,7 +242,7 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			if err != nil {
 				panic(vm.NewGoError(err))
 			}
-			result, err := manager.Dispatch(context.Background(), durableobjects.Envelope{Kind: durableobjects.KindRPC, ID: id, Method: method, ArgsJSON: payload})
+			result, err := manager.Dispatch(runtimebridge.CurrentOwnerContext(vm), durableobjects.Envelope{Kind: durableobjects.KindRPC, ID: id, Method: method, ArgsJSON: payload})
 			if err != nil {
 				panic(vm.NewGoError(err))
 			}
@@ -211,7 +262,7 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			if err != nil {
 				panic(vm.NewGoError(err))
 			}
-			result, err := manager.Dispatch(context.Background(), durableobjects.Envelope{Kind: durableobjects.KindFetch, ID: id, Request: &request})
+			result, err := manager.Dispatch(runtimebridge.CurrentOwnerContext(vm), durableobjects.Envelope{Kind: durableobjects.KindFetch, ID: id, Request: &request})
 			if err != nil {
 				panic(vm.NewGoError(err))
 			}
@@ -381,6 +432,33 @@ func readAsset(host providerapi.HostServices, id, kind string) ([]byte, error) {
 	return data, nil
 }
 
+func (c *capability) ContributeHostServices(ctx context.Context, req providerapi.HostServiceContributionRequest, sink providerapi.HostServiceSink) error {
+	_ = ctx
+	if sink == nil || !selectionIncludesHTTP(req.Modules) || !selectionIncludesDurableObjects(req.Modules) {
+		return nil
+	}
+	host := gojahttp.NewHost(gojahttp.HostOptions{Dev: true})
+	return sink.AddHostService(httpprovider.HostServiceKey, httpprovider.ExternalHostService{Host: host, OwnsListen: true})
+}
+
+func selectionIncludesHTTP(modules []providerapi.ModuleDescriptor) bool {
+	for _, module := range modules {
+		if module.PackageID == httpprovider.PackageID {
+			return true
+		}
+	}
+	return false
+}
+
+func selectionIncludesDurableObjects(modules []providerapi.ModuleDescriptor) bool {
+	for _, module := range modules {
+		if module.PackageID == PackageID {
+			return true
+		}
+	}
+	return false
+}
+
 func externalGatewayService(hostServices providerapi.HostServices) (GatewayService, error) {
 	lookup, ok := hostServices.(providerapi.HostServiceLookup)
 	if !ok || lookup == nil {
@@ -398,6 +476,47 @@ func externalGatewayService(hostServices providerapi.HostServices) (GatewayServi
 		return GatewayService{}, fmt.Errorf("durableobjects host service %q has nil Manager", HostServiceKey)
 	}
 	return service, nil
+}
+
+func externalHTTPHost(hostServices providerapi.HostServices) (*gojahttp.Host, error) {
+	lookup, ok := hostServices.(providerapi.HostServiceLookup)
+	if !ok || lookup == nil {
+		return nil, nil
+	}
+	values := lookup.HostServiceValues(httpprovider.HostServiceKey)
+	if len(values) == 0 {
+		return nil, nil
+	}
+	for _, raw := range values {
+		service, ok := raw.(httpprovider.ExternalHostService)
+		if !ok {
+			return nil, fmt.Errorf("http host service %q must be ExternalHostService, got %T", httpprovider.HostServiceKey, raw)
+		}
+		if service.Host != nil {
+			return service.Host, nil
+		}
+	}
+	return nil, fmt.Errorf("http host service %q has nil Host", httpprovider.HostServiceKey)
+}
+
+func mountGatewayOnHTTPHost(host *gojahttp.Host, handler http.Handler) {
+	if host == nil || handler == nil {
+		return
+	}
+	host.RegisterStaticHandler("/rpc", restorePrefixHandler("/rpc", handler))
+	host.RegisterStaticHandler("/fetch", restorePrefixHandler("/fetch", handler))
+}
+
+func restorePrefixHandler(prefix string, handler http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clone := r.Clone(r.Context())
+		if clone.URL != nil {
+			urlCopy := *clone.URL
+			urlCopy.Path = prefix + urlCopy.Path
+			clone.URL = &urlCopy
+		}
+		handler.ServeHTTP(w, clone)
+	})
 }
 
 func loadManifest(path string) (durableobjects.Manifest, error) {
@@ -462,4 +581,6 @@ func TypeScriptModule() *spec.Module {
 }
 
 var _ providerapi.GlazedConfigSectionCapability = (*capability)(nil)
+var _ providerapi.XGojaConfigSectionCapability = (*capability)(nil)
+var _ providerapi.HostServiceContributionCapability = (*capability)(nil)
 var _ providerapi.RuntimeInitializerCapability = (*capability)(nil)

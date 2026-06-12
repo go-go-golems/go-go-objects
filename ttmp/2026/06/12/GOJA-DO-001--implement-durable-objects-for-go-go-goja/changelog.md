@@ -119,3 +119,35 @@ Added ship-readiness follow-up tasks covering provider config unification, gener
 
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — New tasks 14-25
 
+
+## 2026-06-12
+
+Expanded tasks 14-25 into a detailed ship-readiness checklist with implementation and validation subtasks
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — Detailed ship-readiness checklist
+
+
+## 2026-06-12
+
+Worked through ship-readiness tasks 14-24: unified xgoja provider config via module config mapping, added embedded generated-style tests, mounted gateway on shared xgoja HTTP hosts, propagated runtime contexts, added duplicate actor startup suppression, reconciled alarm indexes, added observability events, added SQLite schema versioning, tightened ID validation, expanded tests, and wrote examples/release docs
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/README.md — Operations and examples docs
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/docs/release-notes.md — Release notes
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/alarms.go — Alarm reconciliation
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/manager.go — Runtime hardening
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Provider hardening
+
+
+## 2026-06-12
+
+Completed final release validation for the ship-readiness pass: go test ./... -count=1, focused race tests for concurrency/provider paths, and docmgr doctor all passed
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/docs/release-notes.md — Validation command list
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — Task 25 checked
+

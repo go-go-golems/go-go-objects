@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,10 @@ import (
 	"github.com/go-go-golems/glazed/pkg/cmds/fields"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
 	"github.com/go-go-golems/go-go-goja/pkg/engine"
+	"github.com/go-go-golems/go-go-goja/pkg/gojahttp"
+	"github.com/go-go-golems/go-go-goja/pkg/xgoja/app"
 	"github.com/go-go-golems/go-go-goja/pkg/xgoja/providerapi"
+	httpprovider "github.com/go-go-golems/go-go-goja/pkg/xgoja/providers/http"
 )
 
 const testBundle = `
@@ -65,9 +70,12 @@ func TestCapabilityProvidesConfigSection(t *testing.T) {
 	}
 }
 
-func TestRuntimeInitializerAndModuleRPC(t *testing.T) {
+func TestGlazedConfigMapsIntoModuleRPC(t *testing.T) {
 	ctx := context.Background()
-	capability := newCapability()
+	registry := providerapi.NewProviderRegistry()
+	if err := Register(registry); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
 	bundlePath, _ := writeBundleAndManifest(t)
 	vals := durableObjectsValues(t, map[string]any{
 		"enabled":        true,
@@ -76,27 +84,12 @@ func TestRuntimeInitializerAndModuleRPC(t *testing.T) {
 		"alarm-interval": "0",
 		"idle-interval":  "0",
 	})
-
-	loader, err := capability.newModuleLoader(providerapi.ModuleSetupContext{})
+	factory := app.NewRuntimeFactory(registry, &app.RuntimeSpec{Modules: []app.ModuleInstanceSpec{{Package: PackageID, Name: "durableobjects"}}})
+	rt, err := factory.NewRuntimeFromSections(ctx, vals)
 	if err != nil {
-		t.Fatalf("newModuleLoader() error = %v", err)
-	}
-	factory, err := engine.NewRuntimeFactoryBuilder(
-		engine.WithImplicitDefaultRegistryModules(false),
-		engine.WithDataOnlyDefaultRegistryModules(true),
-	).WithModules(engine.NativeModuleRegistrar{ModuleName: "durableobjects", Loader: loader}).Build()
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	rt, err := factory.NewRuntime(engine.WithStartupContext(ctx), engine.WithLifetimeContext(ctx))
-	if err != nil {
-		t.Fatalf("NewRuntime() error = %v", err)
+		t.Fatalf("NewRuntimeFromSections() error = %v", err)
 	}
 	defer func() { _ = rt.Close(context.Background()) }()
-
-	if err := capability.InitRuntimeFromSections(ctx, vals, testRuntimeHandle{rt: rt}); err != nil {
-		t.Fatalf("InitRuntimeFromSections() error = %v", err)
-	}
 
 	ret, err := rt.Owner.Call(ctx, "durableobjects.rpc", func(_ context.Context, vm *goja.Runtime) (any, error) {
 		return vm.RunString(`require("durableobjects").rpc("COUNTER", "global", "increment", [2])`)
@@ -105,6 +98,45 @@ func TestRuntimeInitializerAndModuleRPC(t *testing.T) {
 		t.Fatalf("rpc call error = %v", err)
 	}
 	if got := ret.(goja.Value).Export(); got != int64(2) && got != float64(2) && got != 2 {
+		t.Fatalf("rpc result = %#v", got)
+	}
+}
+
+func TestGeneratedStyleRuntimeLoadsEmbeddedBundleAsset(t *testing.T) {
+	ctx := context.Background()
+	registry := providerapi.NewProviderRegistry()
+	if err := Register(registry); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	runtimeSpec := &app.RuntimeSpec{
+		Modules: []app.ModuleInstanceSpec{{
+			Package: PackageID,
+			Name:    "durableobjects",
+			Config: map[string]any{
+				"storageRoot":   t.TempDir(),
+				"bundleAsset":   "durableobjects/objects.js",
+				"alarmInterval": "0",
+				"idleInterval":  "0",
+			},
+		}},
+		Assets: []app.AssetSourceSpec{{ID: "durableobjects/objects.js", Path: "assets/objects.js", Embed: true}},
+	}
+	services := app.HostServices{Assets: app.NewAssetStore(fstest.MapFS{
+		"assets/objects.js": &fstest.MapFile{Data: []byte(testBundle)},
+	}, runtimeSpec)}
+	factory := app.NewRuntimeFactory(registry, runtimeSpec, services)
+	rt, err := factory.NewRuntime(ctx)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+	ret, err := rt.Owner.Call(ctx, "durableobjects.rpc", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`require("durableobjects").rpc("COUNTER", "generated", "increment", [4])`)
+	})
+	if err != nil {
+		t.Fatalf("rpc call error = %v", err)
+	}
+	if got := ret.(goja.Value).Export(); got != int64(4) && got != float64(4) && got != 4 {
 		t.Fatalf("rpc result = %#v", got)
 	}
 }
@@ -166,6 +198,58 @@ func TestModuleConfigLoadsBundleFromEmbeddedAsset(t *testing.T) {
 	}
 }
 
+func TestModuleMountsGatewayOnExternalHTTPHost(t *testing.T) {
+	ctx := context.Background()
+	capability := newCapability()
+	host := gojahttp.NewHost(gojahttp.HostOptions{})
+	bundlePath, _ := writeBundleAndManifest(t)
+	config, err := json.Marshal(map[string]any{
+		"storageRoot":   t.TempDir(),
+		"bundlePath":    bundlePath,
+		"alarmInterval": "0",
+		"idleInterval":  "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader, err := capability.newModuleLoader(providerapi.ModuleSetupContext{
+		Context: ctx,
+		Config:  config,
+		Host: testServiceHost{services: map[string][]any{
+			httpprovider.HostServiceKey: []any{httpprovider.ExternalHostService{Host: host, OwnsListen: true}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("newModuleLoader() error = %v", err)
+	}
+	factory, err := engine.NewRuntimeFactoryBuilder(
+		engine.WithImplicitDefaultRegistryModules(false),
+		engine.WithDataOnlyDefaultRegistryModules(true),
+	).WithModules(engine.NativeModuleRegistrar{ModuleName: "durableobjects", Loader: loader}).Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	rt, err := factory.NewRuntime(engine.WithStartupContext(ctx), engine.WithLifetimeContext(ctx))
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+	if _, err := rt.Owner.Call(ctx, "durableobjects.require", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`require("durableobjects")`)
+	}); err != nil {
+		t.Fatalf("require durableobjects: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/rpc/COUNTER/mounted/increment", strings.NewReader(`[5]`))
+	w := httptest.NewRecorder()
+	host.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"result":5`) {
+		t.Fatalf("body = %s, want result 5", w.Body.String())
+	}
+}
+
 func TestModuleConfigRejectsMixedPathAndAssetModes(t *testing.T) {
 	capability := newCapability()
 	config, err := json.Marshal(map[string]any{
@@ -181,13 +265,12 @@ func TestModuleConfigRejectsMixedPathAndAssetModes(t *testing.T) {
 	}
 }
 
-func TestRuntimeInitializerRequiresBundleWhenEnabled(t *testing.T) {
+func TestRuntimeInitializerIsLifecycleOnly(t *testing.T) {
 	capability := newCapability()
 	vm := goja.New()
 	vals := durableObjectsValues(t, map[string]any{"enabled": true})
-	err := capability.InitRuntimeFromSections(context.Background(), vals, testRuntimeHandle{rt: &engine.Runtime{VM: vm}})
-	if err == nil || !strings.Contains(err.Error(), "bundle-path") {
-		t.Fatalf("expected bundle-path error, got %v", err)
+	if err := capability.InitRuntimeFromSections(context.Background(), vals, testRuntimeHandle{rt: &engine.Runtime{VM: vm}}); err != nil {
+		t.Fatalf("InitRuntimeFromSections() error = %v", err)
 	}
 }
 
@@ -251,6 +334,26 @@ func (h testAssetHost) ResolveAsset(id string) (fs.FS, string, bool) {
 		return nil, "", false
 	}
 	return h.files, id, true
+}
+
+type testServiceHost struct {
+	testAssetHost
+	services map[string][]any
+}
+
+func (h testServiceHost) HostService(key string) (any, bool) {
+	values := h.HostServiceValues(key)
+	if len(values) == 0 {
+		return nil, false
+	}
+	if len(values) == 1 {
+		return values[0], true
+	}
+	return values, true
+}
+
+func (h testServiceHost) HostServiceValues(key string) []any {
+	return append([]any(nil), h.services[key]...)
 }
 
 type testRuntimeHandle struct {

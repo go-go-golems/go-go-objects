@@ -27,8 +27,12 @@ func (m Manifest) Validate() error {
 		return coded(CodeBadRequest, "durable object manifest must define at least one object namespace")
 	}
 	for namespace, className := range m.Objects {
-		if strings.TrimSpace(namespace) == "" {
+		namespace = strings.TrimSpace(namespace)
+		if namespace == "" {
 			return coded(CodeBadRequest, "durable object manifest contains an empty namespace")
+		}
+		if err := validateNamespace(namespace); err != nil {
+			return err
 		}
 		if strings.TrimSpace(className) == "" {
 			return coded(CodeBadRequest, "durable object namespace %q has an empty class name", namespace)

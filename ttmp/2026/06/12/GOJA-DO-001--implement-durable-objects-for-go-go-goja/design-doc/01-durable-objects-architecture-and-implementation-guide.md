@@ -76,6 +76,8 @@ RelatedFiles:
         CLI manifest is now optional
     - Path: cmd/go-go-objects/main_test.go
       Note: CLI bundle/manifest loading tests
+    - Path: docs/release-notes.md
+      Note: Release checklist and known limitations
     - Path: go-go-goja/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/sources/01-durable-objects-research.md
       Note: Imported source research driving MVP scope and architecture
     - Path: pkg/durableobjects/actor.go
@@ -83,7 +85,9 @@ RelatedFiles:
         Initial actor implementation with runtime bootstrap
         Actor activity tracking and idle detection
     - Path: pkg/durableobjects/alarms.go
-      Note: Alarm index and due alarm dispatch support
+      Note: |-
+        Alarm index and due alarm dispatch support
+        SQLite alarm index reconciliation
     - Path: pkg/durableobjects/bundle.go
       Note: Bundle-derived manifest support from exports.objects keys
     - Path: pkg/durableobjects/durableobjects_test.go
@@ -92,11 +96,14 @@ RelatedFiles:
         Alarm dispatch and idle eviction tests
     - Path: pkg/durableobjects/gateway.go
       Note: Initial HTTP gateway for /rpc and /fetch dispatch
+    - Path: pkg/durableobjects/id.go
+      Note: Namespace and object-name safety validation
     - Path: pkg/durableobjects/manager.go
       Note: |-
         Initial manager implementation with live actor map
         Manager lifecycle context
         Manager now derives manifest from bundle when manifest is omitted
+        Singleflight actor startup
     - Path: pkg/durableobjects/manifest.go
       Note: CamelCase to CAMEL_CASE namespace derivation
     - Path: pkg/durableobjects/modules.go
@@ -104,12 +111,15 @@ RelatedFiles:
     - Path: pkg/durableobjects/scheduler.go
       Note: Explicit alarm scheduler and idle evictor wrappers
     - Path: pkg/durableobjects/storage_sqlite.go
-      Note: Initial SQLite-backed per-object storage implementation
+      Note: |-
+        Initial SQLite-backed per-object storage implementation
+        SQLite metadata and schema versioning
     - Path: pkg/xgoja/providers/durableobjects/durableobjects.go
       Note: |-
         xgoja provider package with config capability
         xgoja provider manifest-path is now optional
         xgoja provider now supports filesystem and embedded asset bundle configuration
+        Unified provider config
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
       Note: |-
         xgoja provider registration
@@ -125,6 +135,7 @@ LastUpdated: 2026-06-12T16:35:00-04:00
 WhatFor: Use this as the intern-facing design and implementation guide for GOJA-DO-001.
 WhenToUse: Read before implementing durable object packages, storage, gateway routing, xgoja provider integration, tests, or follow-on compatibility work.
 ---
+
 
 
 

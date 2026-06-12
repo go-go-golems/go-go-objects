@@ -3,7 +3,10 @@ package durableobjects
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,6 +18,10 @@ func (f *SQLiteStorageFactory) openAlarmIndex(ctx context.Context) (*sql.DB, err
 	db, err := sql.Open("sqlite3", f.alarmIndexPath())
 	if err != nil {
 		return nil, wrap(CodeStorageError, "open alarm index", err)
+	}
+	if err := ensureSQLiteSchemaVersion(ctx, db, "alarm index sqlite database"); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	stmts := []string{
 		`PRAGMA journal_mode=WAL`,
@@ -93,7 +100,159 @@ func (f *SQLiteStorageFactory) DueAlarms(ctx context.Context, now time.Time, lim
 	return records, nil
 }
 
+type AlarmReconcileResult struct {
+	ScannedObjects int
+	RepairedIndex  int
+	RemovedStale   int
+}
+
+func (f *SQLiteStorageFactory) ReconcileAlarmIndex(ctx context.Context) (AlarmReconcileResult, error) {
+	result := AlarmReconcileResult{}
+	db, err := f.openAlarmIndex(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer db.Close()
+	local, err := f.localAlarms(ctx)
+	if err != nil {
+		return result, err
+	}
+	result.ScannedObjects = len(local)
+	indexed, err := indexedAlarms(ctx, db)
+	if err != nil {
+		return result, err
+	}
+	for hash, alarm := range local {
+		current, ok := indexed[hash]
+		if ok && current.DueAt.Equal(alarm.DueAt) && current.ID.Namespace == alarm.ID.Namespace && current.ID.Name == alarm.ID.Name {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO object_alarms (object_hash, namespace, name, due_at_ms, updated_at_ms)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(object_hash) DO UPDATE SET namespace = excluded.namespace, name = excluded.name, due_at_ms = excluded.due_at_ms, updated_at_ms = excluded.updated_at_ms`,
+			alarm.ID.Hash, alarm.ID.Namespace, alarm.ID.Name, alarm.DueAt.UnixMilli(), time.Now().UnixMilli()); err != nil {
+			return result, wrap(CodeStorageError, "repair alarm index", err)
+		}
+		result.RepairedIndex++
+	}
+	for hash := range indexed {
+		if _, ok := local[hash]; ok {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, `DELETE FROM object_alarms WHERE object_hash = ?`, hash); err != nil {
+			return result, wrap(CodeStorageError, "remove stale alarm index", err)
+		}
+		result.RemovedStale++
+	}
+	return result, nil
+}
+
+func (f *SQLiteStorageFactory) localAlarms(ctx context.Context) (map[string]AlarmRecord, error) {
+	alarms := map[string]AlarmRecord{}
+	if f == nil || strings.TrimSpace(f.Root) == "" {
+		return alarms, nil
+	}
+	if _, err := os.Stat(f.Root); os.IsNotExist(err) {
+		return alarms, nil
+	}
+	err := filepath.WalkDir(f.Root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Base(path) == "alarms.sqlite" || !strings.HasSuffix(path, ".sqlite") {
+			return nil
+		}
+		record, ok, err := readLocalAlarm(ctx, path)
+		if err != nil {
+			return err
+		}
+		if ok {
+			alarms[record.ID.Hash] = record
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, wrap(CodeStorageError, "scan local alarms", err)
+	}
+	return alarms, nil
+}
+
+func readLocalAlarm(ctx context.Context, path string) (AlarmRecord, bool, error) {
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return AlarmRecord{}, false, wrap(CodeStorageError, "open object database for alarm reconciliation", err)
+	}
+	defer db.Close()
+	id, ok, err := readObjectMetadata(ctx, db)
+	if err != nil || !ok {
+		return AlarmRecord{}, false, err
+	}
+	var dueAtMS int64
+	err = db.QueryRowContext(ctx, `SELECT due_at_ms FROM alarms WHERE singleton = 1`).Scan(&dueAtMS)
+	if err == sql.ErrNoRows {
+		return AlarmRecord{}, false, nil
+	}
+	if err != nil {
+		return AlarmRecord{}, false, wrap(CodeStorageError, "read local alarm", err)
+	}
+	return AlarmRecord{ID: id, DueAt: time.UnixMilli(dueAtMS)}, true, nil
+}
+
+func readObjectMetadata(ctx context.Context, db *sql.DB) (ObjectID, bool, error) {
+	rows, err := db.QueryContext(ctx, `SELECT key, value_json FROM meta WHERE key IN ('object.namespace', 'object.name', 'object.hash')`)
+	if err != nil {
+		return ObjectID{}, false, nil
+	}
+	defer rows.Close()
+	values := map[string]string{}
+	for rows.Next() {
+		var key string
+		var data []byte
+		if err := rows.Scan(&key, &data); err != nil {
+			return ObjectID{}, false, wrap(CodeStorageError, "scan object metadata", err)
+		}
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return ObjectID{}, false, wrap(CodeStorageError, "decode object metadata", err)
+		}
+		values[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return ObjectID{}, false, wrap(CodeStorageError, "iterate object metadata", err)
+	}
+	id := ObjectID{Namespace: values["object.namespace"], Name: values["object.name"], Hash: values["object.hash"]}
+	if id.IsZero() {
+		return ObjectID{}, false, nil
+	}
+	return id, true, nil
+}
+
+func indexedAlarms(ctx context.Context, db *sql.DB) (map[string]AlarmRecord, error) {
+	rows, err := db.QueryContext(ctx, `SELECT namespace, name, object_hash, due_at_ms FROM object_alarms`)
+	if err != nil {
+		return nil, wrap(CodeStorageError, "query indexed alarms", err)
+	}
+	defer rows.Close()
+	out := map[string]AlarmRecord{}
+	for rows.Next() {
+		var namespace, name, hash string
+		var dueAtMS int64
+		if err := rows.Scan(&namespace, &name, &hash, &dueAtMS); err != nil {
+			return nil, wrap(CodeStorageError, "scan indexed alarm", err)
+		}
+		out[hash] = AlarmRecord{ID: ObjectID{Namespace: namespace, Name: name, Hash: hash}, DueAt: time.UnixMilli(dueAtMS)}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(CodeStorageError, "iterate indexed alarms", err)
+	}
+	return out, nil
+}
+
 type AlarmIndexer interface {
 	DueAlarms(ctx context.Context, now time.Time, limit int) ([]AlarmRecord, error)
 	DeleteAlarmIndex(ctx context.Context, id ObjectID) error
+}
+
+type AlarmReconciler interface {
+	ReconcileAlarmIndex(ctx context.Context) (AlarmReconcileResult, error)
 }

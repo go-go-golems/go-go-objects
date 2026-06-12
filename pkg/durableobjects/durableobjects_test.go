@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -64,6 +65,20 @@ func newTestManager(t *testing.T) *Manager {
 	}
 	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
 	return mgr
+}
+
+func TestObjectIDRejectsUnsafeSegments(t *testing.T) {
+	for _, tc := range []struct{ namespace, name string }{
+		{"../COUNTER", "global"},
+		{"COUNTER", "../global"},
+		{"COUNTER/slash", "global"},
+		{"COUNTER", "with/slash"},
+		{"COUNTER", "bad\x00name"},
+	} {
+		if _, err := NewObjectID(tc.namespace, tc.name); err == nil {
+			t.Fatalf("NewObjectID(%q, %q) succeeded, want error", tc.namespace, tc.name)
+		}
+	}
 }
 
 func TestObjectIDStable(t *testing.T) {
@@ -143,6 +158,59 @@ exports.objects = { ChatRoom };
 	}
 }
 
+func TestConcurrentFirstDispatchStartsOneActor(t *testing.T) {
+	ctx := context.Background()
+	var mu sync.Mutex
+	starts := 0
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 2 * time.Second, EventHook: func(event Event) {
+			if event.Name == EventActorStart {
+				mu.Lock()
+				starts++
+				mu.Unlock()
+			}
+		}},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "concurrent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errCh := make(chan error, 20)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			payload, _ := json.Marshal([]any{1})
+			_, err := mgr.Dispatch(ctx, Envelope{Kind: KindRPC, ID: id, Method: "increment", ArgsJSON: payload})
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("Dispatch() error = %v", err)
+		}
+	}
+	mu.Lock()
+	gotStarts := starts
+	mu.Unlock()
+	if gotStarts != 1 {
+		t.Fatalf("actor starts = %d, want 1", gotStarts)
+	}
+	if got := rpcNumber(t, mgr, id, "value", nil); got != 20 {
+		t.Fatalf("counter value = %v, want 20", got)
+	}
+}
+
 func TestCounterRPCPersistsAcrossEviction(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(t)
@@ -213,6 +281,52 @@ func TestAlarmDispatchWakesEvictedActor(t *testing.T) {
 	}
 	if dispatched != 0 {
 		t.Fatalf("second dispatched = %d, want 0", dispatched)
+	}
+}
+
+func TestDispatchDueAlarmsReconcilesMissingIndex(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	factory := NewSQLiteStorageFactory(root)
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		factory,
+		Options{CPUTimeout: 2 * time.Second},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	id, err := NewObjectID("COUNTER", "reconcile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rpcNumber(t, mgr, id, "scheduleAlarm", []any{-1})
+	if err := factory.DeleteAlarmIndex(ctx, id); err != nil {
+		t.Fatalf("DeleteAlarmIndex() error = %v", err)
+	}
+	if err := mgr.Close(ctx); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	mgr, err = NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		factory,
+		Options{CPUTimeout: 2 * time.Second},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() after restart error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	dispatched, err := mgr.DispatchDueAlarms(ctx, time.Now(), 10)
+	if err != nil {
+		t.Fatalf("DispatchDueAlarms() error = %v", err)
+	}
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1", dispatched)
+	}
+	if got := rpcNumber(t, mgr, id, "alarmCount", nil); got != 1 {
+		t.Fatalf("alarmCount = %v, want 1", got)
 	}
 }
 

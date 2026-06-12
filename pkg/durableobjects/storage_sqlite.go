@@ -13,6 +13,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+const sqliteSchemaVersion = 1
+
 type SQLiteStorageFactory struct {
 	Root string
 }
@@ -65,6 +67,9 @@ type SQLiteStorage struct {
 }
 
 func (s *SQLiteStorage) init(ctx context.Context) error {
+	if err := ensureSQLiteSchemaVersion(ctx, s.db, "object sqlite database"); err != nil {
+		return err
+	}
 	stmts := []string{
 		`PRAGMA journal_mode=WAL`,
 		`CREATE TABLE IF NOT EXISTS kv (
@@ -86,6 +91,25 @@ func (s *SQLiteStorage) init(ctx context.Context) error {
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return wrap(CodeStorageError, "initialize object sqlite schema", err)
+		}
+	}
+	if err := s.storeObjectMetadata(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) storeObjectMetadata(ctx context.Context) error {
+	meta := map[string]string{"namespace": s.id.Namespace, "name": s.id.Name, "hash": s.id.Hash}
+	for key, value := range meta {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return wrap(CodeStorageError, "encode object metadata", err)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO meta (key, value_json, updated_at_ms)
+			VALUES (?, ?, ?)
+			ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at_ms = excluded.updated_at_ms`, "object."+key, data, time.Now().UnixMilli()); err != nil {
+			return wrap(CodeStorageError, "store object metadata", err)
 		}
 	}
 	return nil
@@ -202,6 +226,23 @@ type queryExecer interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func ensureSQLiteSchemaVersion(ctx context.Context, db *sql.DB, label string) error {
+	var version int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return wrap(CodeStorageError, "read "+label+" schema version", err)
+	}
+	if version == 0 {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, sqliteSchemaVersion)); err != nil {
+			return wrap(CodeStorageError, "initialize "+label+" schema version", err)
+		}
+		return nil
+	}
+	if version != sqliteSchemaVersion {
+		return coded(CodeStorageError, "%s schema version %d is not supported by runtime schema version %d", label, version, sqliteSchemaVersion)
+	}
+	return nil
 }
 
 func storageGet(ctx context.Context, qe queryExecer, key string) (any, bool, error) {

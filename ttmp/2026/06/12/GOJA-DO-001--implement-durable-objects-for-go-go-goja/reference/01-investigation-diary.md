@@ -24,12 +24,16 @@ RelatedFiles:
         Step 8 optional manifest CLI
     - Path: cmd/go-go-objects/main_test.go
       Note: Step 7 CLI loading tests
+    - Path: docs/release-notes.md
+      Note: Step 10 release validation notes
     - Path: modules/database/database.go
       Note: SQLite module evidence for storage design.
     - Path: pkg/durableobjects/actor.go
       Note: Implementation Step 3 actor work
     - Path: pkg/durableobjects/alarms.go
-      Note: Step 4 alarm index implementation
+      Note: |-
+        Step 4 alarm index implementation
+        Step 10 alarm reconciliation
     - Path: pkg/durableobjects/bundle.go
       Note: Step 8 bundle manifest derivation
     - Path: pkg/durableobjects/durableobjects_test.go
@@ -40,6 +44,7 @@ RelatedFiles:
       Note: |-
         Implementation Step 3 manager work
         Step 4 alarm dispatch
+        Step 10 runtime hardening
     - Path: pkg/durableobjects/manifest.go
       Note: Step 8 namespace derivation
     - Path: pkg/durableobjects/scheduler.go
@@ -55,6 +60,7 @@ RelatedFiles:
         Step 6 xgoja provider implementation
         Step 8 optional manifest provider
         Step 9 embedded asset provider configuration
+        Step 10 provider hardening
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
       Note: |-
         Step 6 provider tests
@@ -69,6 +75,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -706,3 +713,77 @@ This matters for generated binaries: development can keep using local files, whi
 - Filesystem mode uses `bundlePath` plus optional `manifestPath`.
 - Embedded mode uses `bundleAsset` plus optional `manifestAsset`.
 - Path and embedded inputs are intentionally not mixed.
+
+## Step 10: Ship-readiness hardening pass
+
+This step converted the remaining broad follow-up list into a detailed checklist and then implemented the main release-blocking items. The runtime now has a unified xgoja module-config setup path, generated-style embedded asset coverage, shared HTTP host gateway mounting, runtime-context dispatch propagation, duplicate actor startup suppression, alarm index reconciliation, structured event hooks, SQLite schema version checks, stricter object identity validation, and release documentation.
+
+The result is no longer just a prototype slice: it has a concrete pre-release validation path, examples, and operational notes. Some policies remain intentionally conservative for a pre-1.0 runtime, especially the trusted-bundle model and absence of built-in storage quotas.
+
+### Prompt Context
+
+**User prompt (verbatim):** "ok add detailed list of tasks for the above to the ticket, and then work through all of them while i'm out getting groceries, I want something working and ready when I come back."
+
+**Assistant interpretation:** Expand the remaining ship-readiness items into concrete ticket tasks, then implement as many as possible without further prompting, validating and committing coherent slices.
+
+**Inferred user intent:** Return to a working, tested Durable Objects runtime that is close to shippable rather than a loose MVP with known follow-ups.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Expanded tasks 14-25 into a detailed ship-readiness checklist in `tasks.md`.
+- Implemented `XGojaConfigSectionCapability` so public Glazed values map into module config.
+- Kept `InitRuntimeFromSections` as a lifecycle cleanup hook to avoid double manager initialization.
+- Added generated-style embedded asset tests through `app.NewRuntimeFactory` and `app.AssetStore`.
+- Added shared xgoja HTTP host contribution and `/rpc`/`/fetch` gateway mounting.
+- Replaced provider `context.Background()` dispatches with `runtimebridge.CurrentOwnerContext(vm)`.
+- Added per-object actor startup suppression for concurrent first dispatches.
+- Added SQLite alarm reconciliation from object-local alarm metadata into the central alarm index.
+- Added object metadata and `PRAGMA user_version` schema checks for object and alarm databases.
+- Added structured `EventHook` callbacks for dispatch, actor, alarm, and eviction events.
+- Tightened namespace/object name validation.
+- Added examples and release notes.
+- Ran full and focused race validation commands.
+
+### Why
+- The previous MVP worked, but shipping needed better runtime lifecycle behavior, generated-binary configuration, crash recovery around alarms, and enough tests/docs for another engineer to run and review it.
+
+### What worked
+- `go test ./... -count=1` passed.
+- Focused race tests for concurrent startup and provider/xgoja paths passed.
+- The generated-style embedded asset test exercises `bundleAsset` through xgoja `AssetStore`.
+- The HTTP host mounting test verifies `/rpc/COUNTER/...` works through a shared `gojahttp.Host`.
+
+### What didn't work
+- The first test run failed because the new event type referred to `EnvelopeKind`; the actual type is `Kind`.
+- Alarm reconciliation initially caused alarms to fire repeatedly because local object alarm records remained after dispatch. I fixed this by clearing the local alarm before invoking the alarm handler, so a handler can schedule a new alarm without the old one being reintroduced.
+
+### What I learned
+- xgoja runtime initialization has two phases: module config during factory construction and runtime initializer cleanup afterward. Durable Objects should use module config for setup because that path has `HostServices` and embedded assets.
+- Durable Object alarm dispatch should clear the due alarm before handler execution to avoid stale-alarm reconciliation resurrecting already-delivered alarms.
+
+### What was tricky to build
+- Gateway mounting had to preserve `/rpc` and `/fetch` prefixes because `gojahttp.RegisterStaticHandler` strips the mount prefix before calling the handler. The provider now wraps the gateway handler and restores the prefix.
+- Duplicate actor startup needed a small per-object start gate, not just a post-start map check. The new gate lets concurrent callers wait on the first start attempt and retries cleanly after failures.
+- Alarm reconciliation depends on object identity metadata being present inside each object database. New object opens now store that metadata; old databases without metadata are skipped rather than guessed.
+
+### What warrants a second pair of eyes
+- The shared HTTP host contribution can create an external HTTP host when both providers are selected; review interactions with applications that also contribute their own HTTP host service.
+- Reconciliation scans SQLite files under the storage root. This is safe for the MVP but should be revisited for very large deployments.
+- The trusted-bundle security model should be reviewed before advertising hostile-code isolation.
+
+### What should be done in the future
+- Add a real migration chain when schema version 2 is needed.
+- Add configurable storage quotas.
+- Add production metrics exporters on top of `EventHook`.
+
+### Code review instructions
+- Start with `pkg/xgoja/providers/durableobjects/durableobjects.go` for provider config/mounting/context changes.
+- Review `pkg/durableobjects/manager.go` for singleflight startup and alarm dispatch semantics.
+- Review `pkg/durableobjects/alarms.go` and `storage_sqlite.go` for reconciliation and schema metadata.
+- Validate with `go test ./... -count=1` and the focused race command in `docs/release-notes.md`.
+
+### Technical details
+- Public Glazed flags now map into internal xgoja module config through `XGojaConfigFromGlazed`.
+- `bundleAsset` and `manifestAsset` still require an xgoja asset resolver.
+- `EventHook` is synchronous and no-op by default.

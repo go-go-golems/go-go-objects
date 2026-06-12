@@ -12,11 +12,13 @@ type Options struct {
 	StorageRoot string
 	CPUTimeout  time.Duration
 	IdleTimeout time.Duration
+	EventHook   EventHook
 }
 
 type Manager struct {
 	mu       sync.Mutex
 	actors   map[ObjectID]*Actor
+	starts   map[ObjectID]*startCall
 	manifest Manifest
 	bundle   *Bundle
 	storage  StorageFactory
@@ -24,6 +26,12 @@ type Manager struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type startCall struct {
+	done  chan struct{}
+	actor *Actor
+	err   error
 }
 
 func NewManager(manifest Manifest, bundle *Bundle, storage StorageFactory, opts Options) (*Manager, error) {
@@ -48,6 +56,7 @@ func NewManager(manifest Manifest, bundle *Bundle, storage StorageFactory, opts 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		actors:   map[ObjectID]*Actor{},
+		starts:   map[ObjectID]*startCall{},
 		manifest: manifest,
 		bundle:   bundle,
 		storage:  storage,
@@ -57,10 +66,15 @@ func NewManager(manifest Manifest, bundle *Bundle, storage StorageFactory, opts 
 	}, nil
 }
 
-func (m *Manager) Dispatch(ctx context.Context, env Envelope) (Result, error) {
+func (m *Manager) Dispatch(ctx context.Context, env Envelope) (ret Result, err error) {
 	if m == nil {
 		return Result{}, coded(CodeExecutionError, "durable object manager is nil")
 	}
+	started := time.Now()
+	m.emit(Event{Name: EventDispatchStart, ID: env.ID, Kind: env.Kind, Method: env.Method})
+	defer func() {
+		m.emit(Event{Name: EventDispatchEnd, ID: env.ID, Kind: env.Kind, Method: env.Method, Duration: time.Since(started), Error: err})
+	}()
 	if env.ID.IsZero() {
 		return Result{}, coded(CodeBadRequest, "dispatch object id is required")
 	}
@@ -74,6 +88,13 @@ func (m *Manager) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 	return actor.Dispatch(ctx, env)
 }
 
+func (m *Manager) emit(event Event) {
+	if m == nil || m.opts.EventHook == nil {
+		return
+	}
+	m.opts.EventHook(event)
+}
+
 func (m *Manager) Evict(ctx context.Context, id ObjectID) error {
 	m.mu.Lock()
 	actor := m.actors[id]
@@ -82,7 +103,10 @@ func (m *Manager) Evict(ctx context.Context, id ObjectID) error {
 	if actor == nil {
 		return nil
 	}
-	return actor.Close(ctx)
+	m.emit(Event{Name: EventEvict, ID: id})
+	err := actor.Close(ctx)
+	m.emit(Event{Name: EventActorStop, ID: id, Error: err})
+	return err
 }
 
 func (m *Manager) Close(ctx context.Context) error {
@@ -115,26 +139,44 @@ func (m *Manager) ActiveCount() int {
 }
 
 func (m *Manager) getOrStart(ctx context.Context, id ObjectID) (*Actor, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	m.mu.Lock()
-	actor := m.actors[id]
-	m.mu.Unlock()
-	if actor != nil {
+	if actor := m.actors[id]; actor != nil {
+		m.mu.Unlock()
 		return actor, nil
 	}
-
-	started, err := m.startActor(ctx, id)
-	if err != nil {
-		return nil, err
+	if call := m.starts[id]; call != nil {
+		m.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.actor, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
+	call := &startCall{done: make(chan struct{})}
+	m.starts[id] = call
+	m.mu.Unlock()
 
+	actor, err := m.startActor(ctx, id)
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if existing := m.actors[id]; existing != nil {
-		_ = started.Close(ctx)
-		return existing, nil
+	if err == nil {
+		if existing := m.actors[id]; existing != nil {
+			actorToClose := actor
+			actor = existing
+			go func() { _ = actorToClose.Close(context.Background()) }()
+		} else {
+			m.actors[id] = actor
+		}
 	}
-	m.actors[id] = started
-	return started, nil
+	call.actor = actor
+	call.err = err
+	delete(m.starts, id)
+	close(call.done)
+	m.mu.Unlock()
+	return actor, err
 }
 
 func (m *Manager) EvictIdle(ctx context.Context, now time.Time) (int, error) {
@@ -164,15 +206,23 @@ func (m *Manager) EvictIdle(ctx context.Context, now time.Time) (int, error) {
 	evicted := 0
 	var ret error
 	for _, candidate := range candidates {
-		if err := candidate.actor.Close(ctx); err != nil && ret == nil {
-			ret = err
+		m.emit(Event{Name: EventEvict, ID: candidate.id})
+		closeErr := candidate.actor.Close(ctx)
+		if closeErr != nil && ret == nil {
+			ret = closeErr
 		}
+		m.emit(Event{Name: EventActorStop, ID: candidate.id, Error: closeErr})
 		evicted++
 	}
 	return evicted, ret
 }
 
 func (m *Manager) DispatchDueAlarms(ctx context.Context, now time.Time, limit int) (int, error) {
+	if reconciler, ok := m.storage.(AlarmReconciler); ok {
+		if _, err := reconciler.ReconcileAlarmIndex(ctx); err != nil {
+			return 0, err
+		}
+	}
 	index, ok := m.storage.(AlarmIndexer)
 	if !ok {
 		return 0, coded(CodeStorageError, "storage factory does not support alarm indexing")
@@ -183,15 +233,25 @@ func (m *Manager) DispatchDueAlarms(ctx context.Context, now time.Time, limit in
 	}
 	dispatched := 0
 	for _, record := range due {
-		if _, err := m.Dispatch(ctx, Envelope{Kind: KindAlarm, ID: record.ID}); err != nil {
+		if err := m.clearAlarmBeforeDispatch(ctx, record.ID); err != nil {
 			return dispatched, err
 		}
-		if err := index.DeleteAlarmIndex(ctx, record.ID); err != nil {
+		m.emit(Event{Name: EventAlarmDispatch, ID: record.ID})
+		if _, err := m.Dispatch(ctx, Envelope{Kind: KindAlarm, ID: record.ID}); err != nil {
 			return dispatched, err
 		}
 		dispatched++
 	}
 	return dispatched, nil
+}
+
+func (m *Manager) clearAlarmBeforeDispatch(ctx context.Context, id ObjectID) error {
+	storage, err := m.storage.Open(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer storage.Close()
+	return storage.DeleteAlarm(ctx)
 }
 
 func (m *Manager) startActor(ctx context.Context, id ObjectID) (*Actor, error) {
@@ -224,5 +284,6 @@ func (m *Manager) startActor(ctx context.Context, id ObjectID) (*Actor, error) {
 		_ = rt.Close(ctx)
 		return nil, err
 	}
+	m.emit(Event{Name: EventActorStart, ID: id})
 	return actor, nil
 }

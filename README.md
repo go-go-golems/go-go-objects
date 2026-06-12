@@ -126,11 +126,55 @@ modules:
 
 `manifestPath` and `manifestAsset` are optional. If omitted, namespaces are derived from `exports.objects`.
 
+## Storage and operations
+
+SQLite files are stored below the configured storage root:
+
+```text
+var/durable-objects/
+  alarms.sqlite              # central due-alarm index
+  COUNTER/<prefix>/<hash>.sqlite
+```
+
+Each object database stores user key/value data, object metadata, and the local alarm record. The central alarm index is reconciled from object-local alarm records before due alarms are dispatched, so a missing or stale `alarms.sqlite` row can be repaired after a crash.
+
+Back up the full storage root as one unit. The current schema is initialized with `CREATE TABLE IF NOT EXISTS`; future incompatible changes should add explicit schema-version migrations before release.
+
+## Security and resource limits
+
+- Object namespaces and names are validated as safe single path segments before storage paths are derived.
+- Gateway request bodies are capped by `GatewayOptions.MaxRequestBytes` and default to 64 MiB.
+- Production callers should set `DevErrors: false`; detailed errors are intended for local development.
+- JavaScript bundles are trusted code. CPU timeout limits bound per-dispatch execution time, but this is not a sandbox for hostile code.
+- Storage quotas are not enforced yet; embedders should isolate storage roots and monitor disk usage.
+
+## Examples
+
+A runnable counter bundle lives in:
+
+```text
+examples/counter/objects.js
+```
+
+Run it with the CLI:
+
+```bash
+go run ./cmd/go-go-objects --bundle ./examples/counter/objects.js
+```
+
+An xgoja embedded-asset configuration sketch lives in:
+
+```text
+examples/counter/xgoja-runtime.yaml
+```
+
 ## Development
 
 ```bash
 go test ./... -count=1
 ```
+
+For a release candidate, also run focused concurrency tests and `docmgr doctor --ticket GOJA-DO-001 --stale-after 30`. See `docs/release-notes.md` for the full release checklist and known limitations.
 
 The design and implementation diary live in the docmgr ticket:
 
