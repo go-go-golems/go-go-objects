@@ -110,3 +110,12 @@ Added xgoja embedded asset support for Durable Objects provider module config; b
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Embedded asset loading
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects_test.go — Asset mode tests
 
+
+## 2026-06-12
+
+Added ship-readiness follow-up tasks covering provider config unification, generated embedded examples, gateway mounting, context propagation, singleflight startup, alarm reconciliation, observability, storage policy, security/resource limits, integration tests, documentation, and final release validation
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — New tasks 14-25
+

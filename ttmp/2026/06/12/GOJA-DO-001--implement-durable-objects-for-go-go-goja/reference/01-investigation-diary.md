@@ -61,12 +61,15 @@ RelatedFiles:
         Step 9 embedded asset provider tests
     - Path: ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/design-doc/01-durable-objects-architecture-and-implementation-guide.md
       Note: Final implementation guide produced from this investigation.
+    - Path: ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md
+      Note: Ship-readiness follow-up checklist added
 ExternalSources: []
 Summary: Chronological investigation diary for the Durable Objects architecture and implementation guide.
 LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 

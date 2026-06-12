@@ -36,3 +36,15 @@ WhenToUse: Use while implementing or reviewing the Durable Objects work.
 - [x] Add explicit alarm scheduler and idle evictor wrappers.
 - [x] Add built-in counter demo CLI.
 - [x] Implement Phase 6: xgoja provider integration.
+- [ ] Unify provider configuration paths so public Glazed flags and static xgoja module config share one internal config/loader path.
+- [ ] Add generated-binary xgoja fixture/example that embeds a Durable Objects bundle asset and exercises require("durableobjects").
+- [ ] Implement or document automatic gateway mounting for generated HTTP hosts, including how Durable Objects /rpc and /fetch routes are exposed.
+- [ ] Replace provider rpc/fetch context.Background dispatches with runtime/lifetime/current-owner context propagation.
+- [ ] Add actor startup singleflight or equivalent duplicate-start suppression for concurrent first dispatches to the same object.
+- [ ] Harden alarm persistence with crash reconciliation between object-local storage and the central alarm index.
+- [ ] Add observability hooks: structured logs and basic metrics for actor startup, dispatch latency, errors, alarms, eviction, and storage failures.
+- [ ] Define production storage/migration policy for SQLite files, schema versioning, backup expectations, and corrupted-object recovery.
+- [ ] Audit security and resource limits: bundle trust model, CPU timeout behavior, request/body size limits, storage quotas, path/object-name validation, and error redaction defaults.
+- [ ] Expand integration tests for HTTP gateway, alarms across restart, idle eviction, derived namespaces, explicit manifest aliases, and xgoja embedded assets.
+- [ ] Add end-user examples and release documentation: authoring guide, CLI examples, xgoja YAML examples, embedded asset example, and known limitations.
+- [ ] Run final release validation: go test ./... -count=1, race/concurrency-focused tests where feasible, docmgr doctor, clean git status, and tagged release notes.
