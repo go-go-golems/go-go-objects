@@ -27,11 +27,17 @@ type Manager struct {
 }
 
 func NewManager(manifest Manifest, bundle *Bundle, storage StorageFactory, opts Options) (*Manager, error) {
-	if err := manifest.Validate(); err != nil {
-		return nil, err
-	}
 	if bundle == nil || bundle.Source == "" {
 		return nil, coded(CodeBadRequest, "durable object bundle is required")
+	}
+	if manifest.IsZero() {
+		derived, err := bundle.DeriveManifest(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		manifest = derived
+	} else if err := manifest.Validate(); err != nil {
+		return nil, err
 	}
 	if storage == nil {
 		if opts.StorageRoot == "" {

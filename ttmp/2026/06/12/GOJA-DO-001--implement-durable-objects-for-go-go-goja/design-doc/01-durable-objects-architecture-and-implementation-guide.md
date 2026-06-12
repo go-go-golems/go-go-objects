@@ -72,6 +72,7 @@ RelatedFiles:
       Note: |-
         Built-in counter demo server
         CLI now supports external bundle and manifest loading plus scheduler interval flags
+        CLI manifest is now optional
     - Path: cmd/go-go-objects/main_test.go
       Note: CLI bundle/manifest loading tests
     - Path: go-go-goja/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/sources/01-durable-objects-research.md
@@ -82,6 +83,8 @@ RelatedFiles:
         Actor activity tracking and idle detection
     - Path: pkg/durableobjects/alarms.go
       Note: Alarm index and due alarm dispatch support
+    - Path: pkg/durableobjects/bundle.go
+      Note: Bundle-derived manifest support from exports.objects keys
     - Path: pkg/durableobjects/durableobjects_test.go
       Note: |-
         Counter persistence and gateway tests
@@ -92,6 +95,9 @@ RelatedFiles:
       Note: |-
         Initial manager implementation with live actor map
         Manager lifecycle context
+        Manager now derives manifest from bundle when manifest is omitted
+    - Path: pkg/durableobjects/manifest.go
+      Note: CamelCase to CAMEL_CASE namespace derivation
     - Path: pkg/durableobjects/modules.go
       Note: Actor-local state
     - Path: pkg/durableobjects/scheduler.go
@@ -99,7 +105,9 @@ RelatedFiles:
     - Path: pkg/durableobjects/storage_sqlite.go
       Note: Initial SQLite-backed per-object storage implementation
     - Path: pkg/xgoja/providers/durableobjects/durableobjects.go
-      Note: xgoja provider package with config capability
+      Note: |-
+        xgoja provider package with config capability
+        xgoja provider manifest-path is now optional
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
       Note: xgoja provider registration
 ExternalSources:
@@ -113,6 +121,7 @@ LastUpdated: 2026-06-12T16:35:00-04:00
 WhatFor: Use this as the intern-facing design and implementation guide for GOJA-DO-001.
 WhenToUse: Read before implementing durable object packages, storage, gateway routing, xgoja provider integration, tests, or follow-on compatibility work.
 ---
+
 
 
 

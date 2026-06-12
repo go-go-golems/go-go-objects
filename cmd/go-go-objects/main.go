@@ -45,7 +45,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "HTTP listen address")
 	storageRoot := flag.String("storage", "./var/durable-objects", "SQLite storage root")
 	bundlePath := flag.String("bundle", "", "Path to a CommonJS bundle exporting objects; defaults to built-in counter demo")
-	manifestPath := flag.String("manifest", "", "Path to a JSON/YAML manifest; required when --bundle is set")
+	manifestPath := flag.String("manifest", "", "Optional path to a JSON/YAML namespace manifest; defaults to deriving CAMEL_CASE namespaces from exports.objects")
 	cpuTimeout := flag.Duration("cpu-timeout", 2*time.Second, "Per-dispatch JavaScript CPU timeout")
 	idleTimeout := flag.Duration("idle-timeout", 5*time.Minute, "Idle actor eviction timeout")
 	alarmInterval := flag.Duration("alarm-interval", time.Second, "Alarm scheduler interval; 0 disables background alarm dispatch")
@@ -114,14 +114,17 @@ func main() {
 
 func loadInputs(bundlePath, manifestPath string) (durableobjects.Manifest, string, error) {
 	if bundlePath == "" && manifestPath == "" {
-		return durableobjects.Manifest{Objects: map[string]string{"COUNTER": "Counter"}}, counterBundle, nil
+		return durableobjects.Manifest{}, counterBundle, nil
 	}
-	if bundlePath == "" || manifestPath == "" {
-		return durableobjects.Manifest{}, "", fmt.Errorf("--bundle and --manifest must be provided together")
+	if bundlePath == "" {
+		return durableobjects.Manifest{}, "", fmt.Errorf("--manifest requires --bundle")
 	}
 	bundle, err := os.ReadFile(bundlePath)
 	if err != nil {
 		return durableobjects.Manifest{}, "", fmt.Errorf("read bundle %q: %w", bundlePath, err)
+	}
+	if manifestPath == "" {
+		return durableobjects.Manifest{}, string(bundle), nil
 	}
 	manifest, err := loadManifestFile(manifestPath)
 	if err != nil {

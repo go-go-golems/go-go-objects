@@ -87,3 +87,15 @@ Added configurable CLI bundle and manifest loading with YAML/JSON manifest suppo
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main.go — CLI implementation
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main_test.go — CLI tests
 
+
+## 2026-06-12
+
+Made manifests optional: namespaces now derive automatically from exports.objects keys using CamelCase to CAMEL_CASE conversion; CLI and xgoja provider accept bundle-only configuration
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main.go — Optional manifest CLI
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/bundle.go — Derived manifest
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/manifest.go — Namespace conversion
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Optional manifest provider
+

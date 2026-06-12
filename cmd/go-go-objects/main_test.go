@@ -11,18 +11,33 @@ func TestLoadInputsUsesBuiltInDemoWhenPathsOmitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadInputs() error = %v", err)
 	}
-	if class, ok := manifest.ClassForNamespace("COUNTER"); !ok || class != "Counter" {
-		t.Fatalf("manifest COUNTER = %q ok=%v", class, ok)
+	if !manifest.IsZero() {
+		t.Fatalf("manifest = %#v, want zero manifest for derived built-in demo", manifest)
 	}
 	if bundle == "" {
 		t.Fatal("expected built-in bundle")
 	}
 }
 
-func TestLoadInputsRequiresBundleAndManifestTogether(t *testing.T) {
-	if _, _, err := loadInputs("objects.js", ""); err == nil {
-		t.Fatal("expected error when only bundle is provided")
+func TestLoadInputsAllowsBundleWithoutManifest(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "objects.js")
+	if err := os.WriteFile(bundlePath, []byte(`exports.objects = {};`), 0o644); err != nil {
+		t.Fatalf("write bundle: %v", err)
 	}
+	manifest, bundle, err := loadInputs(bundlePath, "")
+	if err != nil {
+		t.Fatalf("loadInputs() error = %v", err)
+	}
+	if !manifest.IsZero() {
+		t.Fatalf("manifest = %#v, want zero manifest for derived namespaces", manifest)
+	}
+	if bundle != `exports.objects = {};` {
+		t.Fatalf("bundle = %q", bundle)
+	}
+}
+
+func TestLoadInputsRejectsManifestWithoutBundle(t *testing.T) {
 	if _, _, err := loadInputs("", "durableobjects.yaml"); err == nil {
 		t.Fatal("expected error when only manifest is provided")
 	}

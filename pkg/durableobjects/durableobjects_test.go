@@ -83,6 +83,66 @@ func TestObjectIDStable(t *testing.T) {
 	}
 }
 
+func TestExportNameToNamespace(t *testing.T) {
+	tests := map[string]string{
+		"Counter":       "COUNTER",
+		"ChatRoom":      "CHAT_ROOM",
+		"URLParser":     "URL_PARSER",
+		"COUNTER":       "COUNTER",
+		"Chat_Room":     "CHAT_ROOM",
+		"chat-room":     "CHAT_ROOM",
+		"Counter2DView": "COUNTER2_D_VIEW",
+	}
+	for input, want := range tests {
+		if got := ExportNameToNamespace(input); got != want {
+			t.Fatalf("ExportNameToNamespace(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestManagerDerivesManifestFromBundleExports(t *testing.T) {
+	mgr, err := NewManager(Manifest{}, NewBundle(counterBundle), NewSQLiteStorageFactory(t.TempDir()), Options{CPUTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rpcNumber(t, mgr, id, "increment", []any{1}); got != 1 {
+		t.Fatalf("increment = %v, want 1", got)
+	}
+}
+
+func TestManagerDerivesCloudflareStyleNamespace(t *testing.T) {
+	bundle := `
+class ChatRoom { constructor(state, env) { this.state = state; this.env = env; } ping() { return "pong"; } }
+exports.objects = { ChatRoom };
+`
+	mgr, err := NewManager(Manifest{}, NewBundle(bundle), NewSQLiteStorageFactory(t.TempDir()), Options{})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("CHAT_ROOM", "general")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	result, err := mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "ping", ArgsJSON: payload})
+	if err != nil {
+		t.Fatalf("Dispatch() error = %v", err)
+	}
+	var got string
+	if err := json.Unmarshal(result.ValueJSON, &got); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if got != "pong" {
+		t.Fatalf("ping = %q, want pong", got)
+	}
+}
+
 func TestCounterRPCPersistsAcrossEviction(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(t)

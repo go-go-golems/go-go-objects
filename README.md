@@ -43,7 +43,18 @@ curl http://127.0.0.1:8787/fetch/COUNTER/global/count
 
 Stop and restart the server, then increment again. The count is recovered from SQLite.
 
-To run your own bundle and manifest:
+To run your own bundle:
+
+```bash
+go run ./cmd/go-go-objects \
+  --addr 127.0.0.1:8787 \
+  --storage ./var/durable-objects \
+  --bundle ./objects.js
+```
+
+Namespaces are derived from `exports.objects` keys with Cloudflare-style `CamelCase` to `CAMEL_CASE` conversion. For example, `exports.objects = { ChatRoom }` creates namespace `CHAT_ROOM`; `exports.objects = { Counter }` creates namespace `COUNTER`.
+
+You can still provide an explicit JSON/YAML manifest when you need custom aliases:
 
 ```bash
 go run ./cmd/go-go-objects \
@@ -52,8 +63,6 @@ go run ./cmd/go-go-objects \
   --bundle ./objects.js \
   --manifest ./durableobjects.yaml
 ```
-
-The manifest maps public namespaces to classes exported by the bundle:
 
 ```yaml
 objects:

@@ -20,6 +20,7 @@ RelatedFiles:
       Note: |-
         Step 5 demo server
         Step 7 configurable CLI loading
+        Step 8 optional manifest CLI
     - Path: cmd/go-go-objects/main_test.go
       Note: Step 7 CLI loading tests
     - Path: modules/database/database.go
@@ -28,6 +29,8 @@ RelatedFiles:
       Note: Implementation Step 3 actor work
     - Path: pkg/durableobjects/alarms.go
       Note: Step 4 alarm index implementation
+    - Path: pkg/durableobjects/bundle.go
+      Note: Step 8 bundle manifest derivation
     - Path: pkg/durableobjects/durableobjects_test.go
       Note: |-
         Validation tests for Step 3
@@ -36,6 +39,8 @@ RelatedFiles:
       Note: |-
         Implementation Step 3 manager work
         Step 4 alarm dispatch
+    - Path: pkg/durableobjects/manifest.go
+      Note: Step 8 namespace derivation
     - Path: pkg/durableobjects/scheduler.go
       Note: Step 5 scheduler wrappers
     - Path: pkg/engine/factory.go
@@ -45,7 +50,9 @@ RelatedFiles:
     - Path: pkg/runtimeowner/runner.go
       Note: Runtime owner evidence for actor mailbox design.
     - Path: pkg/xgoja/providers/durableobjects/durableobjects.go
-      Note: Step 6 xgoja provider implementation
+      Note: |-
+        Step 6 xgoja provider implementation
+        Step 8 optional manifest provider
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
       Note: Step 6 provider tests
     - Path: ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/design-doc/01-durable-objects-architecture-and-implementation-guide.md
@@ -56,6 +63,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -556,4 +564,69 @@ The new CLI flags also expose the same runtime maintenance knobs used by the lib
 ### Code review instructions
 - Review `cmd/go-go-objects/main.go` for flag semantics and lifecycle behavior.
 - Review `cmd/go-go-objects/main_test.go` for accepted and rejected input combinations.
+- Validate with `go test ./... -count=1`.
+
+## Step 8: Derive namespaces from bundle exports
+
+This step removed the manifest requirement from normal use. A bundle now defines Durable Object namespaces directly through `exports.objects`, and the runtime derives public namespace names from export keys using Cloudflare-style `CamelCase` to `CAMEL_CASE` conversion. Explicit manifests remain supported as an override mechanism for custom aliases, but they are no longer required by the manager, CLI, or xgoja provider.
+
+The practical rule is now: the key in `exports.objects` is the object export name, and its derived `CAMEL_CASE` form is the public namespace. `exports.objects = { Counter }` creates namespace `COUNTER`; `exports.objects = { ChatRoom }` creates namespace `CHAT_ROOM`; `exports.objects = { COUNTER: Counter }` keeps namespace `COUNTER`.
+
+### Prompt Context
+
+**User prompt (verbatim):** "do automatic cloudflare style CamelCase -> CAMEL_CASE"
+
+**Assistant interpretation:** Implement automatic namespace derivation from JavaScript export names, using uppercase underscore names by default.
+
+**Inferred user intent:** Make manifests optional and reduce configuration by deriving Durable Object namespace bindings from the bundle itself.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Added `ExportNameToNamespace` in `pkg/durableobjects/manifest.go`.
+- Added `Bundle.DeriveManifest(ctx)` in `pkg/durableobjects/bundle.go`.
+- Changed `NewManager` to derive a manifest from the bundle when the supplied manifest is empty.
+- Updated CLI loading so `--bundle` works without `--manifest`.
+- Kept `--manifest` as an optional alias override.
+- Updated the xgoja provider so `manifest-path` is optional when `bundle-path` is set.
+- Added tests for namespace conversion and bundle-derived manager dispatch.
+- Updated README and ticket changelog/file relations.
+- Ran `go test ./... -count=1`.
+
+### Why
+- A separate manifest duplicated information already present in `exports.objects`.
+- Automatic namespace derivation makes the simplest path one file: the JavaScript bundle.
+- Keeping manifest support preserves explicit aliases and future per-namespace configuration without forcing it on the MVP.
+
+### What worked
+- `Counter` derives to `COUNTER`.
+- `ChatRoom` derives to `CHAT_ROOM`.
+- `URLParser` derives to `URL_PARSER`.
+- Existing explicit uppercase keys such as `COUNTER` remain stable.
+- CLI and provider tests pass without a manifest.
+
+### What didn't work
+- No major failures in this step. The implementation passed after updating tests and formatting.
+
+### What I learned
+- The `exports.objects` table is a better user-facing source of truth than a separate manifest for the MVP.
+- Explicit manifests should become an advanced feature for aliases/configuration, not the default entry path.
+
+### What was tricky to build
+- Acronym handling matters in namespace derivation. A naive algorithm would turn `URLParser` into `U_R_L_PARSER`; the implemented algorithm preserves the acronym and emits `URL_PARSER` by inserting an underscore before an uppercase letter only when a word boundary is detected.
+- Bundle-derived manifests require evaluating the bundle once before actor startup. That means bundle top-level code should be safe to evaluate more than once. If this becomes a problem, a future loader can cache constructor metadata differently.
+
+### What warrants a second pair of eyes
+- Whether double-evaluating bundles for namespace discovery and actor startup is acceptable for all expected bundles.
+- Whether manifest override semantics should remain `namespace -> exportKey` or evolve into a richer object binding structure.
+
+### What should be done in the future
+- Document that bundle top-level code should be idempotent.
+- Consider deriving namespaces during build/generation for xgoja self-contained bundles.
+- Add examples that show both automatic and alias-based namespace definitions.
+
+### Code review instructions
+- Start with `ExportNameToNamespace` in `pkg/durableobjects/manifest.go`.
+- Review `Bundle.DeriveManifest` in `pkg/durableobjects/bundle.go`.
+- Review `NewManager` manifest fallback in `pkg/durableobjects/manager.go`.
 - Validate with `go test ./... -count=1`.

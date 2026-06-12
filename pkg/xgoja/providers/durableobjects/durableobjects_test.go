@@ -66,12 +66,11 @@ func TestCapabilityProvidesConfigSection(t *testing.T) {
 func TestRuntimeInitializerAndModuleRPC(t *testing.T) {
 	ctx := context.Background()
 	capability := newCapability()
-	bundlePath, manifestPath := writeBundleAndManifest(t)
+	bundlePath, _ := writeBundleAndManifest(t)
 	vals := durableObjectsValues(t, map[string]any{
 		"enabled":        true,
 		"storage-root":   t.TempDir(),
 		"bundle-path":    bundlePath,
-		"manifest-path":  manifestPath,
 		"alarm-interval": "0",
 		"idle-interval":  "0",
 	})

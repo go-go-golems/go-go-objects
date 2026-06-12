@@ -83,7 +83,7 @@ func (c *capability) GlazedConfigSections(providerapi.SectionRequest) ([]schema.
 			fields.New("enabled", fields.TypeBool, fields.WithDefault(false), fields.WithHelp("Enable Durable Objects manager initialization")),
 			fields.New("storage-root", fields.TypeString, fields.WithDefault("./var/durable-objects"), fields.WithHelp("SQLite storage root for Durable Objects")),
 			fields.New("bundle-path", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Path to a CommonJS bundle exporting objects")),
-			fields.New("manifest-path", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Path to a JSON/YAML Durable Objects manifest")),
+			fields.New("manifest-path", fields.TypeString, fields.WithDefault(""), fields.WithHelp("Optional path to a JSON/YAML namespace manifest; defaults to deriving CAMEL_CASE namespaces from exports.objects")),
 			fields.New("cpu-timeout", fields.TypeString, fields.WithDefault("2s"), fields.WithHelp("Per-dispatch JavaScript CPU timeout")),
 			fields.New("idle-timeout", fields.TypeString, fields.WithDefault("5m"), fields.WithHelp("Idle actor eviction timeout")),
 			fields.New("alarm-interval", fields.TypeString, fields.WithDefault("1s"), fields.WithHelp("Background alarm scheduler interval; 0 disables the loop")),
@@ -114,13 +114,13 @@ func (c *capability) InitRuntimeFromSections(ctx context.Context, vals *values.V
 	if cfg.BundlePath == "" {
 		return fmt.Errorf("durableobjects bundle-path is required when enabled")
 	}
-	if cfg.ManifestPath == "" {
-		return fmt.Errorf("durableobjects manifest-path is required when enabled")
-	}
-
-	manifest, err := loadManifest(cfg.ManifestPath)
-	if err != nil {
-		return err
+	manifest := durableobjects.Manifest{}
+	if cfg.ManifestPath != "" {
+		var err error
+		manifest, err = loadManifest(cfg.ManifestPath)
+		if err != nil {
+			return err
+		}
 	}
 	bundleSource, err := os.ReadFile(cfg.BundlePath)
 	if err != nil {
