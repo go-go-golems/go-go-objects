@@ -7,7 +7,8 @@ The runtime is intentionally small: each object identity maps to one live JavaSc
 ## Current capabilities
 
 - Stable object identity: namespace + name + hash
-- Manifest mapping namespaces to JavaScript classes
+- Bundle-derived namespaces from `exports.objects` with `CamelCase` to `CAMEL_CASE` conversion
+- Optional manifest aliases for custom namespace mappings
 - CommonJS bundle loading with `exports.objects = { Counter }`
 - Lazy actor startup through `Manager.Dispatch`
 - One owned `goja` runtime per live actor
@@ -98,6 +99,32 @@ class Counter {
 
 exports.objects = { Counter };
 ```
+
+## xgoja provider configuration
+
+The xgoja provider can initialize a Durable Objects manager from filesystem paths:
+
+```yaml
+modules:
+  - package: go-go-objects-durableobjects
+    name: durableobjects
+    config:
+      storageRoot: ./var/durable-objects
+      bundlePath: ./objects.js
+```
+
+For self-contained generated binaries, use embedded xgoja asset IDs instead:
+
+```yaml
+modules:
+  - package: go-go-objects-durableobjects
+    name: durableobjects
+    config:
+      storageRoot: ./var/durable-objects
+      bundleAsset: durableobjects/objects.js
+```
+
+`manifestPath` and `manifestAsset` are optional. If omitted, namespaces are derived from `exports.objects`.
 
 ## Development
 

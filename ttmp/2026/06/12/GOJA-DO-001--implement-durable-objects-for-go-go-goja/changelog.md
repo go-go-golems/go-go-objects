@@ -99,3 +99,14 @@ Made manifests optional: namespaces now derive automatically from exports.object
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/manifest.go — Namespace conversion
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Optional manifest provider
 
+
+## 2026-06-12
+
+Added xgoja embedded asset support for Durable Objects provider module config; bundleAsset/manifestAsset can now load self-contained generated assets, while bundlePath/manifestPath remain supported for filesystem mode
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/README.md — Provider configuration docs
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Embedded asset loading
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects_test.go — Asset mode tests
+

@@ -68,6 +68,7 @@ RelatedFiles:
       Note: |-
         Updated project usage documentation
         Documented custom bundle and manifest usage
+        Documents xgoja path and embedded asset configuration
     - Path: cmd/go-go-objects/main.go
       Note: |-
         Built-in counter demo server
@@ -108,8 +109,11 @@ RelatedFiles:
       Note: |-
         xgoja provider package with config capability
         xgoja provider manifest-path is now optional
+        xgoja provider now supports filesystem and embedded asset bundle configuration
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
-      Note: xgoja provider registration
+      Note: |-
+        xgoja provider registration
+        Provider tests cover embedded bundle assets and mixed mode validation
 ExternalSources:
     - https://developers.cloudflare.com/durable-objects/
     - https://developers.cloudflare.com/durable-objects/concepts/what-are-durable-objects/
@@ -121,6 +125,7 @@ LastUpdated: 2026-06-12T16:35:00-04:00
 WhatFor: Use this as the intern-facing design and implementation guide for GOJA-DO-001.
 WhenToUse: Read before implementing durable object packages, storage, gateway routing, xgoja provider integration, tests, or follow-on compatibility work.
 ---
+
 
 
 

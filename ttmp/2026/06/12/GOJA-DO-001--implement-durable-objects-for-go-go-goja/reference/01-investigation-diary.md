@@ -16,6 +16,7 @@ RelatedFiles:
       Note: |-
         Step 5 project usage docs
         Step 7 CLI usage documentation
+        Step 9 provider config documentation
     - Path: cmd/go-go-objects/main.go
       Note: |-
         Step 5 demo server
@@ -53,8 +54,11 @@ RelatedFiles:
       Note: |-
         Step 6 xgoja provider implementation
         Step 8 optional manifest provider
+        Step 9 embedded asset provider configuration
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
-      Note: Step 6 provider tests
+      Note: |-
+        Step 6 provider tests
+        Step 9 embedded asset provider tests
     - Path: ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/design-doc/01-durable-objects-architecture-and-implementation-guide.md
       Note: Final implementation guide produced from this investigation.
 ExternalSources: []
@@ -63,6 +67,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -630,3 +635,71 @@ The practical rule is now: the key in `exports.objects` is the object export nam
 - Review `Bundle.DeriveManifest` in `pkg/durableobjects/bundle.go`.
 - Review `NewManager` manifest fallback in `pkg/durableobjects/manager.go`.
 - Validate with `go test ./... -count=1`.
+
+## Step 9: Add xgoja embedded asset configuration
+
+This step added a self-contained xgoja provider path for Durable Objects bundles. The provider can now initialize its manager from static module config that points either at filesystem paths (`bundlePath`/`manifestPath`) or embedded xgoja asset IDs (`bundleAsset`/`manifestAsset`). The manifest remains optional because Step 8 made bundle export discovery the default.
+
+This matters for generated binaries: development can keep using local files, while release builds can embed the JavaScript object bundle and load it through xgoja's `HostServices.AssetResolver` without shipping separate runtime files.
+
+### Prompt Context
+
+**User prompt (verbatim):** "conitnue"
+
+**Assistant interpretation:** Continue with the next planned implementation slice after manifestless namespace derivation.
+
+**Inferred user intent:** Keep advancing the Durable Objects runtime toward generated xgoja binary usability, committing after a tested slice.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Added a provider module config schema with `bundlePath`, `manifestPath`, `bundleAsset`, `manifestAsset`, `storageRoot`, and runtime timing fields.
+- Added embedded asset loading through `providerapi.HostServices.AssetResolver()`.
+- Added mode validation so path and asset inputs are not mixed.
+- Added module-config manager initialization for static xgoja configs.
+- Kept public Glazed section path-mode initialization working for existing command flows.
+- Added tests for embedded bundle asset loading and mixed path/asset validation.
+- Updated README provider configuration examples.
+- Ran `go test ./... -count=1`.
+
+### Why
+- Generated xgoja binaries should be able to carry the Durable Objects bundle inside the binary.
+- Filesystem-only provider setup makes deployments depend on colocated `.js` and manifest files.
+- Embedded assets align the provider with existing xgoja `AssetResolver` conventions used by host filesystem modules.
+
+### What worked
+- A provider module config with `bundleAsset: objects.js` loaded the bundle from a fake embedded `fstest.MapFS` asset resolver.
+- The module could call `require("durableobjects").rpc("COUNTER", "asset", "increment", [3])` successfully.
+- Mixed `bundlePath` and `bundleAsset` config fails early with a clear error.
+
+### What didn't work
+- No major implementation failures occurred. The main design constraint was architectural: `RuntimeInitializerCapability` does not receive `HostServices`, so embedded asset support belongs in module setup config where `ModuleSetupContext.Host` is available.
+
+### What I learned
+- xgoja has two setup paths: public Glazed runtime initializer sections and static per-module config passed to `NewModuleFactory`.
+- Embedded assets are naturally available in the module setup path, not the runtime initializer path.
+- Keeping both paths lets command-line development keep using public `bundle-path` flags while generated binaries use static embedded asset config.
+
+### What was tricky to build
+- The provider already had runtime-initializer setup from public Glazed sections. Embedded assets could not simply be added there because that initializer only receives the runtime handle, not host services or the asset resolver.
+- The solution was to add static module config initialization in `NewModuleFactory`, where `ModuleSetupContext.Host` is available. The module loader captures the configured manager and registers a runtime closer when possible.
+- Scheduler and idle-evictor lifetimes needed care. Path-mode runtime initialization uses the runtime lifetime context; module-config initialization creates a cancellable context and cancels it in the registered closer before closing the manager.
+
+### What warrants a second pair of eyes
+- The provider now has two initialization paths. Review whether public Glazed config should eventually be mapped into internal xgoja module config to remove duplication.
+- Review whether module-config manager initialization should eagerly start schedulers before JavaScript requires the module, or defer manager construction until first require.
+
+### What should be done in the future
+- Consider adding `XGojaConfigSectionCapability` so public Glazed values and static module config share one internal config path.
+- Add an end-to-end generated-binary fixture that embeds `objects.js` as an xgoja asset.
+- Document asset declarations in the xgoja YAML format once an example runtime spec is added.
+
+### Code review instructions
+- Start in `pkg/xgoja/providers/durableobjects/durableobjects.go` at `gatewayServiceFromModuleConfig`, `loadBundleSource`, and `readAsset`.
+- Review lifecycle registration in `newModuleLoader`.
+- Validate with `go test ./... -count=1`.
+
+### Technical details
+- Filesystem mode uses `bundlePath` plus optional `manifestPath`.
+- Embedded mode uses `bundleAsset` plus optional `manifestAsset`.
+- Path and embedded inputs are intentionally not mixed.

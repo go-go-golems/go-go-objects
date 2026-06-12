@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,12 +35,13 @@ func Register(registry *providerapi.ProviderRegistry) error {
 	capability := newCapability()
 	return registry.Package(PackageID,
 		providerapi.Module{
-			Name:        "durableobjects",
-			DefaultAs:   "durableobjects",
-			Description: "Durable Objects manager RPC/fetch helpers backed by go-go-objects",
-			TypeScript:  TypeScriptModule(),
+			Name:         "durableobjects",
+			DefaultAs:    "durableobjects",
+			Description:  "Durable Objects manager RPC/fetch helpers backed by go-go-objects",
+			ConfigSchema: moduleConfigSchema(),
+			TypeScript:   TypeScriptModule(),
 			NewModuleFactory: func(ctx providerapi.ModuleSetupContext) (require.ModuleLoader, error) {
-				return capability.newModuleLoader(ctx.Host)
+				return capability.newModuleLoader(ctx)
 			},
 		},
 		providerapi.WithPackageCapability(capability),
@@ -46,14 +49,16 @@ func Register(registry *providerapi.ProviderRegistry) error {
 }
 
 type settings struct {
-	Enabled       bool   `glazed:"enabled"`
-	StorageRoot   string `glazed:"storage-root"`
-	BundlePath    string `glazed:"bundle-path"`
-	ManifestPath  string `glazed:"manifest-path"`
-	CPUTimeout    string `glazed:"cpu-timeout"`
-	IdleTimeout   string `glazed:"idle-timeout"`
-	AlarmInterval string `glazed:"alarm-interval"`
-	IdleInterval  string `glazed:"idle-interval"`
+	Enabled       bool   `glazed:"enabled" json:"enabled"`
+	StorageRoot   string `glazed:"storage-root" json:"storageRoot"`
+	BundlePath    string `glazed:"bundle-path" json:"bundlePath"`
+	ManifestPath  string `glazed:"manifest-path" json:"manifestPath"`
+	BundleAsset   string `json:"bundleAsset"`
+	ManifestAsset string `json:"manifestAsset"`
+	CPUTimeout    string `glazed:"cpu-timeout" json:"cpuTimeout"`
+	IdleTimeout   string `glazed:"idle-timeout" json:"idleTimeout"`
+	AlarmInterval string `glazed:"alarm-interval" json:"alarmInterval"`
+	IdleInterval  string `glazed:"idle-interval" json:"idleInterval"`
 }
 
 type runtimeEntry struct {
@@ -96,11 +101,15 @@ func (c *capability) GlazedConfigSections(providerapi.SectionRequest) ([]schema.
 	return []schema.Section{section}, nil
 }
 
+func defaultSettings() settings {
+	return settings{Enabled: false, StorageRoot: "./var/durable-objects", CPUTimeout: "2s", IdleTimeout: "5m", AlarmInterval: "1s", IdleInterval: "1m"}
+}
+
 func (c *capability) InitRuntimeFromSections(ctx context.Context, vals *values.Values, handle providerapi.RuntimeInitializerHandle) error {
 	if handle == nil || handle.EngineRuntime() == nil || handle.EngineRuntime().VM == nil {
 		return fmt.Errorf("durableobjects provider runtime handle is nil")
 	}
-	cfg := settings{Enabled: false, StorageRoot: "./var/durable-objects", CPUTimeout: "2s", IdleTimeout: "5m", AlarmInterval: "1s", IdleInterval: "1m"}
+	cfg := defaultSettings()
 	if vals == nil {
 		return nil
 	}
@@ -114,71 +123,42 @@ func (c *capability) InitRuntimeFromSections(ctx context.Context, vals *values.V
 	if cfg.BundlePath == "" {
 		return fmt.Errorf("durableobjects bundle-path is required when enabled")
 	}
-	manifest := durableobjects.Manifest{}
-	if cfg.ManifestPath != "" {
-		var err error
-		manifest, err = loadManifest(cfg.ManifestPath)
-		if err != nil {
-			return err
-		}
-	}
-	bundleSource, err := os.ReadFile(cfg.BundlePath)
-	if err != nil {
-		return fmt.Errorf("read durableobjects bundle %q: %w", cfg.BundlePath, err)
-	}
-	cpuTimeout, err := parseDurationSetting("cpu-timeout", cfg.CPUTimeout)
-	if err != nil {
-		return err
-	}
-	idleTimeout, err := parseDurationSetting("idle-timeout", cfg.IdleTimeout)
-	if err != nil {
-		return err
-	}
-	manager, err := durableobjects.NewManager(
-		manifest,
-		durableobjects.NewBundle(string(bundleSource)),
-		durableobjects.NewSQLiteStorageFactory(cfg.StorageRoot),
-		durableobjects.Options{CPUTimeout: cpuTimeout, IdleTimeout: idleTimeout},
-	)
-	if err != nil {
-		return err
-	}
-
 	runtime := handle.EngineRuntime()
+	service, err := newGatewayServiceFromSettings(runtime.Context(), nil, cfg)
+	if err != nil {
+		return err
+	}
+	manager := service.Manager
 	entry := c.entry(runtime.VM)
 	entry.mu.Lock()
 	entry.manager = manager
-	entry.gateway = durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true})
+	entry.gateway = service.Handler
 	entry.mu.Unlock()
-
-	runtimeCtx, cancel := context.WithCancel(runtime.Context())
-	entry.mu.Lock()
-	entry.cancel = cancel
-	entry.mu.Unlock()
-
-	if alarmInterval, err := parseDurationSetting("alarm-interval", cfg.AlarmInterval); err != nil {
-		return err
-	} else if alarmInterval > 0 {
-		go func() {
-			_ = durableobjects.NewAlarmScheduler(manager, alarmInterval, 100, nil).Run(runtimeCtx)
-		}()
-	}
-	if idleInterval, err := parseDurationSetting("idle-interval", cfg.IdleInterval); err != nil {
-		return err
-	} else if idleInterval > 0 {
-		go func() {
-			_ = durableobjects.NewIdleEvictor(manager, idleInterval, nil).Run(runtimeCtx)
-		}()
-	}
 
 	return runtime.AddCloser(func(ctx context.Context) error {
-		cancel()
 		return c.shutdownRuntime(ctx, runtime.VM)
 	})
 }
 
-func (c *capability) newModuleLoader(hostServices providerapi.HostServices) (require.ModuleLoader, error) {
-	external, err := externalGatewayService(hostServices)
+func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (require.ModuleLoader, error) {
+	configuredCtx, configuredCancel := context.WithCancel(context.Background())
+	configured, err := gatewayServiceFromModuleConfig(configuredCtx, ctx.Host, ctx.Config)
+	if err != nil {
+		configuredCancel()
+		return nil, err
+	}
+	if configured.Manager != nil && ctx.AddCloser != nil {
+		manager := configured.Manager
+		if err := ctx.AddCloser(func(ctx context.Context) error {
+			configuredCancel()
+			return manager.Close(ctx)
+		}); err != nil {
+			configuredCancel()
+			_ = manager.Close(context.Background())
+			return nil, err
+		}
+	}
+	external, err := externalGatewayService(ctx.Host)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +166,11 @@ func (c *capability) newModuleLoader(hostServices providerapi.HostServices) (req
 		entry := c.entry(vm)
 		entry.mu.Lock()
 		manager := entry.manager
+		if configured.Manager != nil {
+			manager = configured.Manager
+			entry.manager = manager
+			entry.gateway = configured.Handler
+		}
 		if external.Manager != nil {
 			manager = external.Manager
 			entry.manager = manager
@@ -270,6 +255,132 @@ func (c *capability) shutdownRuntime(ctx context.Context, vm *goja.Runtime) erro
 	return nil
 }
 
+func gatewayServiceFromModuleConfig(ctx context.Context, host providerapi.HostServices, data json.RawMessage) (GatewayService, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return GatewayService{}, nil
+	}
+	cfg := defaultSettings()
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return GatewayService{}, fmt.Errorf("decode durableobjects module config: %w", err)
+	}
+	if cfg.BundlePath == "" && cfg.BundleAsset == "" && cfg.ManifestPath == "" && cfg.ManifestAsset == "" {
+		return GatewayService{}, nil
+	}
+	return newGatewayServiceFromSettings(ctx, host, cfg)
+}
+
+func newGatewayServiceFromSettings(ctx context.Context, host providerapi.HostServices, cfg settings) (GatewayService, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	bundleSource, err := loadBundleSource(host, cfg)
+	if err != nil {
+		return GatewayService{}, err
+	}
+	manifest, err := loadConfiguredManifest(host, cfg)
+	if err != nil {
+		return GatewayService{}, err
+	}
+	cpuTimeout, err := parseDurationSetting("cpu-timeout", cfg.CPUTimeout)
+	if err != nil {
+		return GatewayService{}, err
+	}
+	idleTimeout, err := parseDurationSetting("idle-timeout", cfg.IdleTimeout)
+	if err != nil {
+		return GatewayService{}, err
+	}
+	manager, err := durableobjects.NewManager(
+		manifest,
+		durableobjects.NewBundle(bundleSource),
+		durableobjects.NewSQLiteStorageFactory(cfg.StorageRoot),
+		durableobjects.Options{CPUTimeout: cpuTimeout, IdleTimeout: idleTimeout},
+	)
+	if err != nil {
+		return GatewayService{}, err
+	}
+	service := GatewayService{Manager: manager, Handler: durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true})}
+	if alarmInterval, err := parseDurationSetting("alarm-interval", cfg.AlarmInterval); err != nil {
+		_ = manager.Close(ctx)
+		return GatewayService{}, err
+	} else if alarmInterval > 0 {
+		go func() {
+			_ = durableobjects.NewAlarmScheduler(manager, alarmInterval, 100, nil).Run(ctx)
+		}()
+	}
+	if idleInterval, err := parseDurationSetting("idle-interval", cfg.IdleInterval); err != nil {
+		_ = manager.Close(ctx)
+		return GatewayService{}, err
+	} else if idleInterval > 0 {
+		go func() {
+			_ = durableobjects.NewIdleEvictor(manager, idleInterval, nil).Run(ctx)
+		}()
+	}
+	return service, nil
+}
+
+func loadBundleSource(host providerapi.HostServices, cfg settings) (string, error) {
+	bundlePath := strings.TrimSpace(cfg.BundlePath)
+	bundleAsset := strings.TrimSpace(cfg.BundleAsset)
+	if bundlePath != "" && bundleAsset != "" {
+		return "", fmt.Errorf("durableobjects config cannot combine bundlePath and bundleAsset")
+	}
+	if bundleAsset != "" {
+		data, err := readAsset(host, bundleAsset, "bundle")
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+	if bundlePath == "" {
+		return "", fmt.Errorf("durableobjects bundle-path is required when enabled")
+	}
+	data, err := os.ReadFile(bundlePath)
+	if err != nil {
+		return "", fmt.Errorf("read durableobjects bundle %q: %w", bundlePath, err)
+	}
+	return string(data), nil
+}
+
+func loadConfiguredManifest(host providerapi.HostServices, cfg settings) (durableobjects.Manifest, error) {
+	manifestPath := strings.TrimSpace(cfg.ManifestPath)
+	manifestAsset := strings.TrimSpace(cfg.ManifestAsset)
+	if manifestPath != "" && manifestAsset != "" {
+		return durableobjects.Manifest{}, fmt.Errorf("durableobjects config cannot combine manifestPath and manifestAsset")
+	}
+	if cfg.BundlePath != "" && manifestAsset != "" {
+		return durableobjects.Manifest{}, fmt.Errorf("durableobjects config cannot combine bundlePath and manifestAsset")
+	}
+	if cfg.BundleAsset != "" && manifestPath != "" {
+		return durableobjects.Manifest{}, fmt.Errorf("durableobjects config cannot combine bundleAsset and manifestPath")
+	}
+	if manifestAsset != "" {
+		data, err := readAsset(host, manifestAsset, "manifest")
+		if err != nil {
+			return durableobjects.Manifest{}, err
+		}
+		return decodeManifestBytes("asset "+manifestAsset, data)
+	}
+	if manifestPath != "" {
+		return loadManifest(manifestPath)
+	}
+	return durableobjects.Manifest{}, nil
+}
+
+func readAsset(host providerapi.HostServices, id, kind string) ([]byte, error) {
+	if host == nil || host.AssetResolver() == nil {
+		return nil, fmt.Errorf("durableobjects %s asset %q requires a host asset resolver", kind, id)
+	}
+	fsys, path, ok := host.AssetResolver().ResolveAsset(id)
+	if !ok {
+		return nil, fmt.Errorf("durableobjects %s asset %q was not found", kind, id)
+	}
+	data, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return nil, fmt.Errorf("read durableobjects %s asset %q: %w", kind, id, err)
+	}
+	return data, nil
+}
+
 func externalGatewayService(hostServices providerapi.HostServices) (GatewayService, error) {
 	lookup, ok := hostServices.(providerapi.HostServiceLookup)
 	if !ok || lookup == nil {
@@ -294,10 +405,14 @@ func loadManifest(path string) (durableobjects.Manifest, error) {
 	if err != nil {
 		return durableobjects.Manifest{}, fmt.Errorf("read durableobjects manifest %q: %w", path, err)
 	}
+	return decodeManifestBytes(path, data)
+}
+
+func decodeManifestBytes(source string, data []byte) (durableobjects.Manifest, error) {
 	var manifest durableobjects.Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		if yamlErr := yaml.Unmarshal(data, &manifest); yamlErr != nil {
-			return durableobjects.Manifest{}, fmt.Errorf("decode durableobjects manifest %q as JSON (%v) or YAML (%v)", path, err, yamlErr)
+			return durableobjects.Manifest{}, fmt.Errorf("decode durableobjects manifest %q as JSON (%v) or YAML (%v)", source, err, yamlErr)
 		}
 	}
 	if err := manifest.Validate(); err != nil {
@@ -315,6 +430,23 @@ func parseDurationSetting(name, value string) (time.Duration, error) {
 		return 0, fmt.Errorf("parse durableobjects %s duration %q: %w", name, value, err)
 	}
 	return d, nil
+}
+
+func moduleConfigSchema() json.RawMessage {
+	return json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "storageRoot": {"type": "string", "description": "SQLite storage root for Durable Objects"},
+    "bundlePath": {"type": "string", "description": "Path to a CommonJS bundle exporting objects"},
+    "manifestPath": {"type": "string", "description": "Optional path to a JSON/YAML namespace manifest"},
+    "bundleAsset": {"type": "string", "description": "Embedded asset id for a CommonJS bundle exporting objects"},
+    "manifestAsset": {"type": "string", "description": "Optional embedded asset id for a JSON/YAML namespace manifest"},
+    "cpuTimeout": {"type": "string", "description": "Per-dispatch JavaScript CPU timeout"},
+    "idleTimeout": {"type": "string", "description": "Idle actor eviction timeout"},
+    "alarmInterval": {"type": "string", "description": "Background alarm scheduler interval; 0 disables the loop"},
+    "idleInterval": {"type": "string", "description": "Background idle evictor interval; 0 disables the loop"}
+  }
+}`)
 }
 
 func TypeScriptModule() *spec.Module {

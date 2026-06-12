@@ -3,10 +3,12 @@ package durableobjectsprovider
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/dop251/goja"
 	"github.com/go-go-golems/glazed/pkg/cmds/fields"
@@ -75,7 +77,7 @@ func TestRuntimeInitializerAndModuleRPC(t *testing.T) {
 		"idle-interval":  "0",
 	})
 
-	loader, err := capability.newModuleLoader(nil)
+	loader, err := capability.newModuleLoader(providerapi.ModuleSetupContext{})
 	if err != nil {
 		t.Fatalf("newModuleLoader() error = %v", err)
 	}
@@ -107,7 +109,79 @@ func TestRuntimeInitializerAndModuleRPC(t *testing.T) {
 	}
 }
 
-func TestRuntimeInitializerRequiresBundleAndManifestWhenEnabled(t *testing.T) {
+func TestModuleConfigLoadsBundleFromEmbeddedAsset(t *testing.T) {
+	ctx := context.Background()
+	capability := newCapability()
+	host := testAssetHost{files: fstest.MapFS{
+		"objects.js": &fstest.MapFile{Data: []byte(testBundle)},
+	}}
+	config, err := json.Marshal(map[string]any{
+		"storageRoot":   t.TempDir(),
+		"bundleAsset":   "objects.js",
+		"alarmInterval": "0",
+		"idleInterval":  "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var closers []func(context.Context) error
+	loader, err := capability.newModuleLoader(providerapi.ModuleSetupContext{
+		Context: ctx,
+		Config:  config,
+		Host:    host,
+		AddCloser: func(fn func(context.Context) error) error {
+			closers = append(closers, fn)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("newModuleLoader() error = %v", err)
+	}
+	defer func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			_ = closers[i](context.Background())
+		}
+	}()
+	factory, err := engine.NewRuntimeFactoryBuilder(
+		engine.WithImplicitDefaultRegistryModules(false),
+		engine.WithDataOnlyDefaultRegistryModules(true),
+	).WithModules(engine.NativeModuleRegistrar{ModuleName: "durableobjects", Loader: loader}).Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	rt, err := factory.NewRuntime(engine.WithStartupContext(ctx), engine.WithLifetimeContext(ctx))
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+
+	ret, err := rt.Owner.Call(ctx, "durableobjects.rpc", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`require("durableobjects").rpc("COUNTER", "asset", "increment", [3])`)
+	})
+	if err != nil {
+		t.Fatalf("rpc call error = %v", err)
+	}
+	if got := ret.(goja.Value).Export(); got != int64(3) && got != float64(3) && got != 3 {
+		t.Fatalf("rpc result = %#v", got)
+	}
+}
+
+func TestModuleConfigRejectsMixedPathAndAssetModes(t *testing.T) {
+	capability := newCapability()
+	config, err := json.Marshal(map[string]any{
+		"bundlePath":  "objects.js",
+		"bundleAsset": "objects.js",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = capability.newModuleLoader(providerapi.ModuleSetupContext{Config: config, Host: testAssetHost{}})
+	if err == nil || !strings.Contains(err.Error(), "cannot combine bundlePath and bundleAsset") {
+		t.Fatalf("expected mixed mode error, got %v", err)
+	}
+}
+
+func TestRuntimeInitializerRequiresBundleWhenEnabled(t *testing.T) {
 	capability := newCapability()
 	vm := goja.New()
 	vals := durableObjectsValues(t, map[string]any{"enabled": true})
@@ -161,6 +235,22 @@ func durableObjectsValues(t *testing.T, overrides map[string]any) *values.Values
 		t.Fatalf("section values: %v", err)
 	}
 	return values.New(values.WithSectionValues("durableobjects", sectionValues))
+}
+
+type testAssetHost struct {
+	files fstest.MapFS
+}
+
+func (h testAssetHost) AssetResolver() providerapi.AssetResolver { return h }
+
+func (h testAssetHost) ResolveAsset(id string) (fs.FS, string, bool) {
+	if h.files == nil {
+		return nil, "", false
+	}
+	if _, err := fs.Stat(h.files, id); err != nil {
+		return nil, "", false
+	}
+	return h.files, id, true
 }
 
 type testRuntimeHandle struct {
