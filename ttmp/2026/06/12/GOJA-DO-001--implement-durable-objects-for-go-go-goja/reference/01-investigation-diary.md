@@ -13,9 +13,15 @@ Intent: long-term
 Owners: []
 RelatedFiles:
     - Path: README.md
-      Note: Step 5 project usage docs
+      Note: |-
+        Step 5 project usage docs
+        Step 7 CLI usage documentation
     - Path: cmd/go-go-objects/main.go
-      Note: Step 5 demo server
+      Note: |-
+        Step 5 demo server
+        Step 7 configurable CLI loading
+    - Path: cmd/go-go-objects/main_test.go
+      Note: Step 7 CLI loading tests
     - Path: modules/database/database.go
       Note: SQLite module evidence for storage design.
     - Path: pkg/durableobjects/actor.go
@@ -50,6 +56,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -494,3 +501,59 @@ The provider deliberately keeps the Durable Objects runtime implementation in `p
 - Module name: `durableobjects`.
 - Config section slug: `durableobjects`.
 - Required enabled config: `bundle-path`, `manifest-path`, and `storage-root`.
+
+## Step 7: Add configurable CLI bundle and manifest loading
+
+This step converted the demo CLI from a built-in-only counter server into a reusable local Durable Objects host. The built-in counter remains the default for a zero-configuration smoke test, but callers can now provide their own CommonJS bundle and JSON/YAML manifest with `--bundle` and `--manifest`.
+
+The new CLI flags also expose the same runtime maintenance knobs used by the library: CPU timeout, idle timeout, alarm scheduler interval, idle eviction interval, and development error verbosity.
+
+### Prompt Context
+
+**User prompt (verbatim):** "commit at appropriate intervals in the fturue."
+
+**Assistant interpretation:** Commit completed work in coherent tested slices going forward, and continue with the next bounded implementation task.
+
+**Inferred user intent:** Avoid accumulating too many unrelated changes before committing.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Added `--bundle` and `--manifest` CLI flags.
+- Added JSON/YAML manifest loading for the CLI.
+- Kept the built-in Counter demo as the default when both paths are omitted.
+- Added `--cpu-timeout`, `--idle-timeout`, `--alarm-interval`, `--idle-interval`, and `--dev-errors` flags.
+- Added `cmd/go-go-objects/main_test.go` for input loading behavior.
+- Updated `README.md` with custom bundle/manifest usage.
+- Ran `gofmt` and `go test ./... -count=1`.
+
+### Why
+- A hard-coded demo proves the runtime, but a useful host must accept user-provided object classes and namespace manifests.
+- This is a coherent commit-sized slice: CLI configurability plus tests and docs.
+
+### What worked
+- The default no-path mode still uses the built-in Counter demo.
+- The CLI reads external bundles and YAML manifests.
+- `go test ./... -count=1` passes.
+
+### What didn't work
+- No major failures in this step.
+
+### What I learned
+- The CLI and xgoja provider now have parallel bundle/manifest loading behavior. A future refactor should move file loading into a shared package function to avoid drift.
+
+### What was tricky to build
+- The CLI should reject partially configured input. Supplying only `--bundle` or only `--manifest` is ambiguous, so `loadInputs` returns a clear error when the flags are not provided together.
+
+### What warrants a second pair of eyes
+- The CLI accepts filesystem paths only. Embedded assets are still provider-specific future work.
+- YAML parsing uses `gopkg.in/yaml.v3`, which is already present via the provider dependency.
+
+### What should be done in the future
+- Share manifest loading between CLI and xgoja provider.
+- Add an example `examples/counter/objects.js` and `examples/counter/durableobjects.yaml` instead of relying only on the embedded string.
+
+### Code review instructions
+- Review `cmd/go-go-objects/main.go` for flag semantics and lifecycle behavior.
+- Review `cmd/go-go-objects/main_test.go` for accepted and rejected input combinations.
+- Validate with `go test ./... -count=1`.

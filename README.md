@@ -43,6 +43,24 @@ curl http://127.0.0.1:8787/fetch/COUNTER/global/count
 
 Stop and restart the server, then increment again. The count is recovered from SQLite.
 
+To run your own bundle and manifest:
+
+```bash
+go run ./cmd/go-go-objects \
+  --addr 127.0.0.1:8787 \
+  --storage ./var/durable-objects \
+  --bundle ./objects.js \
+  --manifest ./durableobjects.yaml
+```
+
+The manifest maps public namespaces to classes exported by the bundle:
+
+```yaml
+objects:
+  COUNTER: Counter
+  CHAT_ROOM: ChatRoom
+```
+
 ## JavaScript authoring model
 
 The MVP authoring model is CommonJS:

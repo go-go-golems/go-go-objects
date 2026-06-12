@@ -77,3 +77,13 @@ Implemented xgoja provider integration: durableobjects provider package, config 
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Provider implementation
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects_test.go — Provider tests
 
+
+## 2026-06-12
+
+Added configurable CLI bundle and manifest loading with YAML/JSON manifest support, scheduler interval flags, README usage docs, and tests
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main.go — CLI implementation
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main_test.go — CLI tests
+

@@ -65,9 +65,15 @@ RelatedFiles:
         Provider packaging pattern, config sections, runtime entries, and external host service injection.
         xgoja provider packaging and service injection model
     - Path: README.md
-      Note: Updated project usage documentation
+      Note: |-
+        Updated project usage documentation
+        Documented custom bundle and manifest usage
     - Path: cmd/go-go-objects/main.go
-      Note: Built-in counter demo server
+      Note: |-
+        Built-in counter demo server
+        CLI now supports external bundle and manifest loading plus scheduler interval flags
+    - Path: cmd/go-go-objects/main_test.go
+      Note: CLI bundle/manifest loading tests
     - Path: go-go-goja/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/sources/01-durable-objects-research.md
       Note: Imported source research driving MVP scope and architecture
     - Path: pkg/durableobjects/actor.go
@@ -107,6 +113,7 @@ LastUpdated: 2026-06-12T16:35:00-04:00
 WhatFor: Use this as the intern-facing design and implementation guide for GOJA-DO-001.
 WhenToUse: Read before implementing durable object packages, storage, gateway routing, xgoja provider integration, tests, or follow-on compatibility work.
 ---
+
 
 
 
