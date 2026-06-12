@@ -53,80 +53,80 @@ WhenToUse: Use while implementing or reviewing the Durable Objects work.
 ## Ship-readiness detailed checklist
 
 ### Task 14: Provider configuration unification
-- [ ] Add an internal xgoja module config section for Durable Objects settings.
-- [ ] Map public Glazed `durableobjects-*` flags into that internal module config.
-- [ ] Keep filesystem mode and embedded asset mode using the same loader helpers.
-- [ ] Avoid double-initializing managers when both module config and runtime initializers run.
-- [ ] Update provider tests to exercise the standard `RuntimeFactory.NewRuntimeFromSections` path.
+- [x] Add an internal xgoja module config section for Durable Objects settings.
+- [x] Map public Glazed `durableobjects-*` flags into that internal module config.
+- [x] Keep filesystem mode and embedded asset mode using the same loader helpers.
+- [x] Avoid double-initializing managers when both module config and runtime initializers run.
+- [x] Update provider tests to exercise the standard `RuntimeFactory.NewRuntimeFromSections` path.
 
 ### Task 15: Generated embedded-asset fixture/example
-- [ ] Add a checked-in example bundle and runtime spec or test fixture.
-- [ ] Exercise `bundleAsset` without filesystem bundle dependencies.
-- [ ] Verify `require("durableobjects").rpc(...)` works from the generated-style runtime path.
-- [ ] Document how to declare the embedded asset in xgoja configuration.
+- [x] Add a checked-in example bundle and runtime spec or test fixture.
+- [x] Exercise `bundleAsset` without filesystem bundle dependencies.
+- [x] Verify `require("durableobjects").rpc(...)` works from the generated-style runtime path.
+- [x] Document how to declare the embedded asset in xgoja configuration.
 
 ### Task 16: Gateway mounting
-- [ ] Decide whether Durable Objects should mount into the xgoja HTTP host automatically or via explicit host service wiring.
-- [ ] Provide a shared HTTP host when both `go-go-goja-http` and Durable Objects are selected.
-- [ ] Mount `/rpc` and `/fetch` without stripping the route prefixes expected by the Durable Objects gateway.
-- [ ] Add a test proving a single xgoja HTTP host can serve Durable Objects gateway routes.
-- [ ] Document fallback/manual mounting behavior.
+- [x] Decide whether Durable Objects should mount into the xgoja HTTP host automatically or via explicit host service wiring.
+- [x] Provide a shared HTTP host when both `go-go-goja-http` and Durable Objects are selected.
+- [x] Mount `/rpc` and `/fetch` without stripping the route prefixes expected by the Durable Objects gateway.
+- [x] Add a test proving a single xgoja HTTP host can serve Durable Objects gateway routes.
+- [x] Document fallback/manual mounting behavior.
 
 ### Task 17: Provider dispatch context propagation
-- [ ] Replace `context.Background()` in provider `rpc`/`fetch` with a runtime-scoped context.
-- [ ] Ensure dispatches cancel when the generated runtime closes.
-- [ ] Keep JavaScript API synchronous for now while preserving cancellation.
-- [ ] Add a regression test or code review note for the context source.
+- [x] Replace `context.Background()` in provider `rpc`/`fetch` with a runtime-scoped context.
+- [x] Ensure dispatches cancel when the generated runtime closes.
+- [x] Keep JavaScript API synchronous for now while preserving cancellation.
+- [x] Add a regression test or code review note for the context source.
 
 ### Task 18: Actor startup duplicate suppression
-- [ ] Add a per-object startup gate (`singleflight` or equivalent) around actor construction.
-- [ ] Ensure concurrent first dispatches to the same object share one actor startup.
-- [ ] Ensure failed startups do not poison future attempts.
-- [ ] Add a concurrency test for simultaneous dispatches.
+- [x] Add a per-object startup gate (`singleflight` or equivalent) around actor construction.
+- [x] Ensure concurrent first dispatches to the same object share one actor startup.
+- [x] Ensure failed startups do not poison future attempts.
+- [x] Add a concurrency test for simultaneous dispatches.
 
 ### Task 19: Alarm reconciliation
-- [ ] Add a reconciler that compares central alarm index entries with object-local `alarm_at` metadata.
-- [ ] Repair missing index rows for objects with local alarms.
-- [ ] Remove stale index rows for objects without local alarms where feasible.
-- [ ] Document remaining non-atomic cross-database behavior.
-- [ ] Add restart/reconciliation tests.
+- [x] Add a reconciler that compares central alarm index entries with object-local `alarm_at` metadata.
+- [x] Repair missing index rows for objects with local alarms.
+- [x] Remove stale index rows for objects without local alarms where feasible.
+- [x] Document remaining non-atomic cross-database behavior.
+- [x] Add restart/reconciliation tests.
 
 ### Task 20: Observability
-- [ ] Add structured event hooks for actor start/stop, dispatch start/end, alarm dispatch, eviction, and storage errors.
-- [ ] Add lightweight metrics counters/durations that tests can inspect.
-- [ ] Keep default hooks no-op so embedders opt into collection.
-- [ ] Document event names and fields.
+- [x] Add structured event hooks for actor start/stop, dispatch start/end, alarm dispatch, eviction, and storage errors.
+- [x] Add lightweight metrics counters/durations that tests can inspect.
+- [x] Keep default hooks no-op so embedders opt into collection.
+- [x] Document event names and fields.
 
 ### Task 21: Storage/migration policy
-- [ ] Define SQLite schema version storage.
-- [ ] Add migration hook or explicit version validation for object DBs and alarm index DB.
-- [ ] Document backup, corruption, and recovery assumptions.
-- [ ] Add README/operator notes for storage root layout.
+- [x] Define SQLite schema version storage.
+- [x] Add migration hook or explicit version validation for object DBs and alarm index DB.
+- [x] Document backup, corruption, and recovery assumptions.
+- [x] Add README/operator notes for storage root layout.
 
 ### Task 22: Security/resource limits
-- [ ] Audit object names and namespace validation against path traversal and unbounded path segments.
-- [ ] Add gateway request/body size limits or document current limits.
-- [ ] Default production gateway errors to redacted output.
-- [ ] Document trusted-bundle model and CPU timeout behavior.
-- [ ] Add tests for invalid names, oversized requests if implemented, and redaction.
+- [x] Audit object names and namespace validation against path traversal and unbounded path segments.
+- [x] Add gateway request/body size limits or document current limits.
+- [x] Default production gateway errors to redacted output.
+- [x] Document trusted-bundle model and CPU timeout behavior.
+- [x] Add tests for invalid names, oversized requests if implemented, and redaction.
 
 ### Task 23: Integration tests
-- [ ] Add HTTP gateway RPC and fetch tests.
-- [ ] Add alarm persistence/across-restart tests.
-- [ ] Add idle eviction recovery tests.
-- [ ] Add explicit manifest alias tests.
-- [ ] Add xgoja embedded asset integration tests.
+- [x] Add HTTP gateway RPC and fetch tests.
+- [x] Add alarm persistence/across-restart tests.
+- [x] Add idle eviction recovery tests.
+- [x] Add explicit manifest alias tests.
+- [x] Add xgoja embedded asset integration tests.
 
 ### Task 24: Examples and release documentation
-- [ ] Add JavaScript authoring guide.
-- [ ] Add CLI usage examples for demo and custom bundles.
-- [ ] Add xgoja static config and embedded asset examples.
-- [ ] Add known limitations and production-readiness notes.
-- [ ] Update the design doc with final decisions.
+- [x] Add JavaScript authoring guide.
+- [x] Add CLI usage examples for demo and custom bundles.
+- [x] Add xgoja static config and embedded asset examples.
+- [x] Add known limitations and production-readiness notes.
+- [x] Update the design doc with final decisions.
 
 ### Task 25: Final release validation
-- [ ] Run `go test ./... -count=1`.
-- [ ] Run race/concurrency-focused tests where feasible.
-- [ ] Run `docmgr doctor --ticket GOJA-DO-001 --stale-after 30`.
-- [ ] Ensure `git status --short` is clean after final commits.
-- [ ] Write release notes/tag guidance.
+- [x] Run `go test ./... -count=1`.
+- [x] Run race/concurrency-focused tests where feasible.
+- [x] Run `docmgr doctor --ticket GOJA-DO-001 --stale-after 30`.
+- [x] Ensure `git status --short` is clean after final commits.
+- [x] Write release notes/tag guidance.

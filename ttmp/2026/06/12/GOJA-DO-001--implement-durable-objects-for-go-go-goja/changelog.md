@@ -151,3 +151,12 @@ Completed final release validation for the ship-readiness pass: go test ./... -c
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/docs/release-notes.md — Validation command list
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — Task 25 checked
 
+
+## 2026-06-12
+
+Checked detailed ship-readiness subtasks after completing the hardening pass and final validation
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — Detailed subtasks 26-80 checked
+
