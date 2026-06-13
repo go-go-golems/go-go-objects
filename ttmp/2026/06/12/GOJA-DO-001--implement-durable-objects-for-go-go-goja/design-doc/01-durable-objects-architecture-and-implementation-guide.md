@@ -56,6 +56,8 @@ RelatedFiles:
       Note: |-
         RuntimeOwner and Scheduler interfaces define the thread-safety contract for goja runtimes.
         RuntimeOwner and Scheduler contracts
+    - Path: ../../../../../../../go-go-goja/pkg/xgoja/app/command_providers.go
+      Note: Command provider context now passes HostServices for embedded asset resolution
     - Path: ../../../../../../../go-go-goja/pkg/xgoja/app/host_services.go
       Note: |-
         Host service bag and closer contribution pattern for generated xgoja applications.
@@ -78,6 +80,8 @@ RelatedFiles:
       Note: CLI bundle/manifest loading tests
     - Path: docs/release-notes.md
       Note: Release checklist and known limitations
+    - Path: examples/templates/durableobjects_http_runtime.go.tmpl
+      Note: Custom xgoja template example for existing http.Server integration
     - Path: go-go-goja/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/sources/01-durable-objects-research.md
       Note: Imported source research driving MVP scope and architecture
     - Path: pkg/durableobjects/actor.go
@@ -110,6 +114,8 @@ RelatedFiles:
       Note: Actor-local state
     - Path: pkg/durableobjects/scheduler.go
       Note: Explicit alarm scheduler and idle evictor wrappers
+    - Path: pkg/durableobjects/server.go
+      Note: Embeddable Durable Objects HTTP server helper
     - Path: pkg/durableobjects/storage_sqlite.go
       Note: |-
         Initial SQLite-backed per-object storage implementation
@@ -124,6 +130,8 @@ RelatedFiles:
       Note: |-
         xgoja provider registration
         Provider tests cover embedded bundle assets and mixed mode validation
+    - Path: pkg/xgoja/providers/durableobjects/serve.go
+      Note: xgoja durableobjects serve command provider
 ExternalSources:
     - https://developers.cloudflare.com/durable-objects/
     - https://developers.cloudflare.com/durable-objects/concepts/what-are-durable-objects/
@@ -135,6 +143,7 @@ LastUpdated: 2026-06-12T16:35:00-04:00
 WhatFor: Use this as the intern-facing design and implementation guide for GOJA-DO-001.
 WhenToUse: Read before implementing durable object packages, storage, gateway routing, xgoja provider integration, tests, or follow-on compatibility work.
 ---
+
 
 
 

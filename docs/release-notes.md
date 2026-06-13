@@ -10,6 +10,8 @@ This release candidate provides an MVP Durable Objects runtime for goja/go-go-go
 - HTTP gateway routes under `/rpc` and `/fetch`,
 - CLI demo/custom bundle server,
 - xgoja provider module with filesystem and embedded asset bundle loading,
+- xgoja `durableobjects serve` command provider for generated binaries,
+- embeddable HTTP server helper and custom xgoja template example for existing `http.Server` applications,
 - automatic `exports.objects` namespace derivation using `CamelCase` to `CAMEL_CASE` conversion.
 
 ## Validation commands
@@ -32,6 +34,7 @@ git status --short
 - SQLite schema versioning is present through `PRAGMA user_version`, but no multi-version migration chain exists yet.
 - The gateway path model treats object names as one URL path segment.
 - Automatic HTTP mounting is supported when the Durable Objects provider can see a shared xgoja HTTP host service; embedders can still mount `GatewayService.Handler` manually.
+- The generated `durableobjects serve` command is provider-owned; generated binaries must include a `commandProviders` entry for `go-go-objects-durableobjects.serve`.
 
 ## Tagging guidance
 

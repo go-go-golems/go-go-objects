@@ -126,6 +126,27 @@ modules:
 
 `manifestPath` and `manifestAsset` are optional. If omitted, namespaces are derived from `exports.objects`.
 
+The provider also exposes a command provider mounted as `durableobjects serve` by default. In an xgoja buildspec, enable it with:
+
+```yaml
+commandProviders:
+  - id: durableobjects-serve
+    package: go-go-objects-durableobjects
+    name: serve
+    mount: durableobjects
+    config:
+      storageRoot: ./var/durable-objects
+      bundleAsset: durableobjects/objects.js
+```
+
+The generated command runs a Durable Objects HTTP gateway directly:
+
+```bash
+./generated-app durableobjects serve --addr 127.0.0.1:8787
+```
+
+For existing Go HTTP servers, use xgoja `target.kind: template` with `examples/templates/durableobjects_http_runtime.go.tmpl`. The generated package exposes `NewRuntime(ctx)`, `Runtime.Mount(mux)`, `Runtime.Handler()`, and `Runtime.Close(ctx)` so a host application can mount `/rpc/` and `/fetch/` on its own `http.Server`.
+
 ## Storage and operations
 
 SQLite files are stored below the configured storage root:

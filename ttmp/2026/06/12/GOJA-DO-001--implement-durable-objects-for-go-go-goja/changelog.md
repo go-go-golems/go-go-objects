@@ -170,3 +170,25 @@ Fixed real CLI smoke-test bug: alarm scheduler now creates the SQLite storage ro
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/alarms.go — Create alarm index storage root before sql.Open
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Regression test for DispatchDueAlarms on missing storage root
 
+
+## 2026-06-12
+
+Added follow-up tasks for xgoja durableobjects serve command provider and embeddable HTTP server/template integration
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — Xgoja serve/template tasks
+
+
+## 2026-06-12
+
+Implemented missing xgoja UX pieces: Durable Objects serve command provider, reusable embeddable HTTP server helper, generated buildspec/template examples, and HostServices propagation into xgoja command providers
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-goja/pkg/xgoja/app/command_providers.go — HostServices propagation
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/counter/xgoja-buildspec.yaml — Generated binary example with command provider
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/templates/durableobjects_http_runtime.go.tmpl — Custom template mode example
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/server.go — Embeddable server helper
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/serve.go — Provider-owned serve command
+

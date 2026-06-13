@@ -1,9 +1,11 @@
 package durableobjectsprovider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/dop251/goja"
 	"github.com/go-go-golems/glazed/pkg/cmds/fields"
@@ -50,6 +53,9 @@ func TestRegister(t *testing.T) {
 	}
 	if mod.TypeScript == nil {
 		t.Fatal("expected TypeScript descriptor")
+	}
+	if _, ok := registry.ResolveCommandSetProvider(PackageID, "serve"); !ok {
+		t.Fatal("expected durableobjects serve command provider")
 	}
 	caps, ok := registry.ResolvePackageCapabilities(PackageID)
 	if !ok || len(caps) != 1 {
@@ -138,6 +144,59 @@ func TestGeneratedStyleRuntimeLoadsEmbeddedBundleAsset(t *testing.T) {
 	}
 	if got := ret.(goja.Value).Export(); got != int64(4) && got != float64(4) && got != 4 {
 		t.Fatalf("rpc result = %#v", got)
+	}
+}
+
+func TestServeCommandSetCreatesServeCommand(t *testing.T) {
+	set, err := newServeCommandSet(providerapi.CommandSetContext{})
+	if err != nil {
+		t.Fatalf("newServeCommandSet() error = %v", err)
+	}
+	if len(set.Commands) != 1 || set.Commands[0].Description().Name != "serve" {
+		t.Fatalf("commands = %#v", set.Commands)
+	}
+}
+
+func TestServeOnListenerLoadsEmbeddedBundleAsset(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	host := testAssetHost{files: fstest.MapFS{"objects.js": &fstest.MapFile{Data: []byte(testBundle)}}}
+	var out bytes.Buffer
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveOnListener(ctx, listener, host, settings{
+			StorageRoot:   t.TempDir(),
+			BundleAsset:   "objects.js",
+			CPUTimeout:    "2s",
+			IdleTimeout:   "5m",
+			AlarmInterval: "0",
+			IdleInterval:  "0",
+		}, serveSettings{MaxRequestBytes: 64 << 20, DevErrors: true}, &out)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var resp *http.Response
+	for time.Now().Before(deadline) {
+		resp, err = http.Post("http://"+addr+"/rpc/COUNTER/serve/increment", "application/json", strings.NewReader(`[6]`))
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("post rpc: %v; output=%s", err, out.String())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	cancel()
+	if err := <-errCh; err != nil && err != context.Canceled {
+		t.Fatalf("serveOnListener() error = %v", err)
 	}
 }
 

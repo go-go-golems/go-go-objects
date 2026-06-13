@@ -230,6 +230,31 @@ func TestCounterRPCPersistsAcrossEviction(t *testing.T) {
 	}
 }
 
+func TestServerMountsIntoServeMux(t *testing.T) {
+	server, err := NewServer(context.Background(), ServerOptions{
+		BundleSource:    counterBundle,
+		StorageRoot:     t.TempDir(),
+		CPUTimeout:      2 * time.Second,
+		MaxRequestBytes: 64 << 20,
+		DevErrors:       true,
+	})
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close(context.Background()) })
+	mux := http.NewServeMux()
+	server.Mount(mux)
+	req := httptest.NewRequest(http.MethodPost, "/rpc/COUNTER/mounted/increment", bytes.NewBufferString(`[7]`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"result":7`)) {
+		t.Fatalf("body = %s, want result 7", w.Body.String())
+	}
+}
+
 func TestFetchGateway(t *testing.T) {
 	mgr := newTestManager(t)
 	id, err := NewObjectID("COUNTER", "global")

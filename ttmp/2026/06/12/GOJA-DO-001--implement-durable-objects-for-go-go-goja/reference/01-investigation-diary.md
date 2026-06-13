@@ -12,6 +12,8 @@ DocType: reference
 Intent: long-term
 Owners: []
 RelatedFiles:
+    - Path: ../../../../../../../go-go-goja/pkg/xgoja/app/command_providers.go
+      Note: Step 11 HostServices propagation
     - Path: README.md
       Note: |-
         Step 5 project usage docs
@@ -26,6 +28,8 @@ RelatedFiles:
       Note: Step 7 CLI loading tests
     - Path: docs/release-notes.md
       Note: Step 10 release validation notes
+    - Path: examples/templates/durableobjects_http_runtime.go.tmpl
+      Note: Step 11 custom template example
     - Path: modules/database/database.go
       Note: SQLite module evidence for storage design.
     - Path: pkg/durableobjects/actor.go
@@ -49,6 +53,8 @@ RelatedFiles:
       Note: Step 8 namespace derivation
     - Path: pkg/durableobjects/scheduler.go
       Note: Step 5 scheduler wrappers
+    - Path: pkg/durableobjects/server.go
+      Note: Step 11 embeddable server helper
     - Path: pkg/engine/factory.go
       Note: Runtime factory evidence for actor runtime design.
     - Path: pkg/gojahttp/host.go
@@ -65,6 +71,8 @@ RelatedFiles:
       Note: |-
         Step 6 provider tests
         Step 9 embedded asset provider tests
+    - Path: pkg/xgoja/providers/durableobjects/serve.go
+      Note: Step 11 xgoja serve command
     - Path: ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/design-doc/01-durable-objects-architecture-and-implementation-guide.md
       Note: Final implementation guide produced from this investigation.
     - Path: ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md
@@ -75,6 +83,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -787,3 +796,65 @@ The result is no longer just a prototype slice: it has a concrete pre-release va
 - Public Glazed flags now map into internal xgoja module config through `XGojaConfigFromGlazed`.
 - `bundleAsset` and `manifestAsset` still require an xgoja asset resolver.
 - `EventHook` is synchronous and no-op by default.
+
+## Step 11: Add xgoja serve command and embeddable template path
+
+This step turned the xgoja integration from provider plumbing into a user-facing generated-binary experience. The Durable Objects provider now registers a `serve` command provider, intended to be mounted as `durableobjects serve`, and the core package has a reusable `Server` helper for applications that want to mount Durable Objects into an existing `http.Server` instead of generating a full main or Cobra command.
+
+The xgoja side also needed one framework-level fix: command providers now receive `HostServices` in their `CommandSetContext`. That lets the Durable Objects `serve` command resolve embedded bundle assets from generated binaries, matching the module setup path that already used `HostServices`.
+
+### Prompt Context
+
+**User prompt (verbatim):** "Add detailed tasks to the ticket, then implement the missing xgoja provider pieces (I think go-go-goja itself does the template thing for a webserver as well)"
+
+**Assistant interpretation:** Track and implement the missing xgoja UX: a first-class serve command plus a template/embeddable path for host-owned HTTP servers.
+
+**Inferred user intent:** Durable Objects should be usable from generated xgoja binaries, not only from the standalone `go-go-objects` CLI or low-level module API.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Added GOJA-DO-001 tasks 81-87 for xgoja serve/template work.
+- Added `pkg/durableobjects/server.go` with `NewServer`, `Server.Mount`, `Handler`, and `Close` semantics.
+- Added `pkg/xgoja/providers/durableobjects/serve.go` implementing a provider-owned `serve` command.
+- Registered the command provider as `go-go-objects-durableobjects.serve` with default mount `durableobjects`.
+- Added support for command-provider static config (`bundleAsset`, `bundlePath`, storage/timing fields) and public Glazed overrides.
+- Patched `go-go-goja/pkg/xgoja/app/command_providers.go` so command providers receive `HostServices`.
+- Added tests for command provider registration, command creation, embedded-asset serve behavior, and `Server.Mount`.
+- Added `examples/counter/xgoja-buildspec.yaml` with a generated-binary command provider example.
+- Added `examples/templates/durableobjects_http_runtime.go.tmpl` showing xgoja `target.kind: template` for host-owned HTTP server integration.
+- Updated README and release notes.
+
+### Why
+- Generated xgoja binaries need a direct operational command for Durable Objects, analogous to xgoja HTTP's `serve` command.
+- Host applications with existing HTTP servers need a generated package/helper shape rather than a generated `main` or CLI command.
+- Embedded assets are only useful for provider commands if those commands can access xgoja host services.
+
+### What worked
+- `go test ./... -count=1` passes in `go-go-objects`.
+- `go test ./pkg/xgoja/app -count=1` passes in `go-go-goja`.
+- The serve command test loads `objects.js` from a fake embedded asset resolver and serves `/rpc/COUNTER/...` over a real listener.
+
+### What didn't work
+- Command providers previously had a `Host` field in `CommandSetContext`, but `app.Host` did not populate it. The Durable Objects serve command exposed this because embedded assets require `HostServices.AssetResolver()`.
+
+### What I learned
+- xgoja already has the custom generation primitive the user remembered: `target.kind: template`. The missing work was not a generator rewrite, but a Durable Objects-specific template example and a reusable embeddable server/helper API.
+
+### What was tricky to build
+- The provider has three related but distinct entry points now: CommonJS module setup, generated command provider setup, and embeddable HTTP server setup. The shared loader helpers keep filesystem and embedded asset behavior consistent across them.
+- The command provider must allow static embedded config from xgoja YAML while still accepting public command-line overrides for filesystem development.
+
+### What warrants a second pair of eyes
+- The custom template example is intentionally opinionated for Durable Objects plus xgoja HTTP. Review whether it should move into go-go-goja as a built-in template later.
+- Review the command provider config schema if generated apps need static `addr`/`devErrors` defaults in xgoja YAML rather than only command flags.
+
+### What should be done in the future
+- Add an end-to-end `xgoja generate` fixture once this provider is published as a dependency rather than only available through the local workspace.
+- Consider adding a provider-owned hot-reload mode for bundle file development.
+
+### Code review instructions
+- Start with `pkg/xgoja/providers/durableobjects/serve.go`.
+- Review `pkg/durableobjects/server.go` for embeddable server semantics.
+- Review `go-go-goja/pkg/xgoja/app/command_providers.go` for the HostServices propagation patch.
+- Validate with `go test ./... -count=1` in `go-go-objects` and `go test ./pkg/xgoja/app -count=1` in `go-go-goja`.

@@ -48,6 +48,15 @@ func Register(registry *providerapi.ProviderRegistry) error {
 			},
 		},
 		providerapi.WithPackageCapability(capability),
+		providerapi.CommandSetProvider{
+			Name:         "serve",
+			DefaultMount: "durableobjects",
+			Description:  "Serve Durable Objects RPC/fetch endpoints",
+			ConfigSchema: moduleConfigSchema(),
+			NewCommandSet: func(ctx providerapi.CommandSetContext) (*providerapi.CommandSet, error) {
+				return newServeCommandSet(ctx)
+			},
+		},
 	)
 }
 

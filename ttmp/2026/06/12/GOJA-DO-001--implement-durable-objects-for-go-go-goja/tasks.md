@@ -130,3 +130,10 @@ WhenToUse: Use while implementing or reviewing the Durable Objects work.
 - [x] Run `docmgr doctor --ticket GOJA-DO-001 --stale-after 30`.
 - [x] Ensure `git status --short` is clean after final commits.
 - [x] Write release notes/tag guidance.
+- [x] Add Durable Objects xgoja command provider named serve, mounted as durableobjects serve by default.
+- [x] Make durableobjects serve load filesystem bundles and generated embedded bundle assets through xgoja HostServices.
+- [x] Factor reusable embeddable Durable Objects HTTP server helper for existing http.Server integrations.
+- [x] Patch go-go-goja command provider context so provider commands receive HostServices and can resolve embedded assets.
+- [x] Add xgoja custom template example for generating an embeddable Durable Objects HTTP runtime package instead of a main/command.
+- [x] Add tests covering durableobjects serve command provider creation and server behavior.
+- [x] Document xgoja durableobjects serve usage and custom template mode for existing http.Server applications.

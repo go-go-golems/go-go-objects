@@ -1,0 +1,47 @@
+name: durableobjects-counter
+appName: durableobjects-counter
+envPrefix: DO_COUNTER
+
+go:
+  version: "1.23"
+  module: example.com/durableobjects-counter
+
+target:
+  kind: package
+  output: ./internal/doruntime
+  package: doruntime
+
+packages:
+  - id: go-go-objects-durableobjects
+    import: github.com/go-go-golems/go-go-objects/pkg/xgoja/providers/durableobjects
+    register: Register
+  - id: go-go-goja-http
+    import: github.com/go-go-golems/go-go-goja/pkg/xgoja/providers/http
+    register: Register
+
+modules:
+  - package: go-go-objects-durableobjects
+    name: durableobjects
+    config:
+      storageRoot: ./var/durable-objects
+      bundleAsset: durableobjects/counter.js
+      alarmInterval: 1s
+      idleInterval: 1m
+  - package: go-go-goja-http
+    name: express
+
+commandProviders:
+  - id: durableobjects-serve
+    package: go-go-objects-durableobjects
+    name: serve
+    mount: durableobjects
+    config:
+      storageRoot: ./var/durable-objects
+      bundleAsset: durableobjects/counter.js
+      alarmInterval: 1s
+      idleInterval: 1m
+
+assets:
+  - id: durableobjects/counter.js
+    path: examples/counter/objects.js
+    embed: true
