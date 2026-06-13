@@ -215,3 +215,14 @@ Fixed PR #1 review and CI failures: removed local go-go-goja replace, updated lo
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.mod — Removed local replace and bumped Go patch version
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/storage_sqlite.go — Constrained SQLite path construction for CodeQL/gosec
 
+
+## 2026-06-12
+
+Addressed follow-up PR #1 review comments: escaped SQLite LIKE prefixes for literal storage.list semantics, mapped CPU budget interrupts to CodeTimeout/504, and annotated the validated SQLite directory creation path for CodeQL
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/actor.go — Timeout classification
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Regression tests for prefix scanning and timeout gateway status
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/storage_sqlite.go — Literal prefix scanning and CodeQL annotation
+

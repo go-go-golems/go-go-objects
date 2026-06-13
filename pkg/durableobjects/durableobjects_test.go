@@ -26,6 +26,13 @@ class Counter {
   value() {
     return this.state.storage.get("count") || 0;
   }
+  put(key, value) {
+    this.state.storage.put(key, value);
+    return true;
+  }
+  list(prefix) {
+    return this.state.storage.list({ prefix });
+  }
   fetch(req) {
     if (req.path === "/count") {
       return { status: 200, headers: { "X-Counter": "yes" }, body: String(this.state.storage.get("count") || 0) };
@@ -492,6 +499,50 @@ func TestEvictIdleDoesNotEvictActiveActor(t *testing.T) {
 	}
 }
 
+func TestStorageListTreatsPrefixLiterally(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "prefix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rpcValue(t, mgr, id, "put", []any{"user_1", "literal"})
+	rpcValue(t, mgr, id, "put", []any{"userA", "wildcard-match-if-unescaped"})
+	rpcValue(t, mgr, id, "put", []any{"percent%1", "literal-percent"})
+	rpcValue(t, mgr, id, "put", []any{"percentA1", "wildcard-match-if-unescaped"})
+
+	userList := rpcValue(t, mgr, id, "list", []any{"user_"}).(map[string]any)
+	if len(userList) != 1 || userList["user_1"] != "literal" {
+		t.Fatalf("list user_ = %#v, want only user_1", userList)
+	}
+	percentList := rpcValue(t, mgr, id, "list", []any{"percent%"}).(map[string]any)
+	if len(percentList) != 1 || percentList["percent%1"] != "literal-percent" {
+		t.Fatalf("list percent%% = %#v, want only percent%%1", percentList)
+	}
+}
+
+func TestRPCGatewayReportsTimeout(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	gateway := NewGateway(mgr, GatewayOptions{DevErrors: true})
+	req := httptest.NewRequest(http.MethodPost, "/rpc/COUNTER/slow/spin", bytes.NewBufferString(`[100]`))
+	w := httptest.NewRecorder()
+	gateway.ServeHTTP(w, req)
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, body = %s, want 504", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte(`"code":"timeout"`)) {
+		t.Fatalf("body = %s, want timeout code", w.Body.String())
+	}
+}
+
 func TestRPCGateway(t *testing.T) {
 	gateway := NewGateway(newTestManager(t), GatewayOptions{DevErrors: true})
 	req := httptest.NewRequest(http.MethodPost, "/rpc/COUNTER/global/increment", bytes.NewBufferString(`[2]`))
@@ -513,7 +564,7 @@ func TestRPCGateway(t *testing.T) {
 	}
 }
 
-func rpcNumber(t *testing.T, mgr *Manager, id ObjectID, method string, args []any) float64 {
+func rpcValue(t *testing.T, mgr *Manager, id ObjectID, method string, args []any) any {
 	t.Helper()
 	payload, err := json.Marshal(args)
 	if err != nil {
@@ -523,9 +574,18 @@ func rpcNumber(t *testing.T, mgr *Manager, id ObjectID, method string, args []an
 	if err != nil {
 		t.Fatalf("Dispatch(%s) error = %v", method, err)
 	}
-	var got float64
+	var got any
 	if err := json.Unmarshal(result.ValueJSON, &got); err != nil {
 		t.Fatalf("decode result %q: %v", string(result.ValueJSON), err)
+	}
+	return got
+}
+
+func rpcNumber(t *testing.T, mgr *Manager, id ObjectID, method string, args []any) float64 {
+	t.Helper()
+	got, ok := rpcValue(t, mgr, id, method, args).(float64)
+	if !ok {
+		t.Fatalf("Dispatch(%s) returned non-number", method)
 	}
 	return got
 }

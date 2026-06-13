@@ -40,6 +40,7 @@ func (f *SQLiteStorageFactory) Open(ctx context.Context, id ObjectID) (Storage, 
 		return nil, err
 	}
 	// #nosec G703 -- pathFor validates a SHA-256 hex object hash and verifies the final path stays under the configured storage root.
+	// codeql[go/path-injection] path is produced by pathFor, which validates the hash and checks the path remains below the storage root.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, wrap(CodeStorageError, "create object storage directory", err)
 	}
@@ -345,12 +346,24 @@ func storageDelete(ctx context.Context, qe queryExecer, key string) (bool, error
 	return rows > 0, nil
 }
 
+func escapeSQLiteLikePrefix(prefix string) string {
+	var b strings.Builder
+	b.Grow(len(prefix))
+	for _, r := range prefix {
+		if r == '\\' || r == '%' || r == '_' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func storageList(ctx context.Context, qe queryExecer, prefix string, limit int) (map[string]any, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
-	like := prefix + "%"
-	rows, err := qe.QueryContext(ctx, `SELECT key, value_json FROM kv WHERE key LIKE ? ORDER BY key LIMIT ?`, like, limit)
+	like := escapeSQLiteLikePrefix(prefix) + "%"
+	rows, err := qe.QueryContext(ctx, `SELECT key, value_json FROM kv WHERE key LIKE ? ESCAPE '\' ORDER BY key LIMIT ?`, like, limit)
 	if err != nil {
 		return nil, wrap(CodeStorageError, "list storage keys", err)
 	}

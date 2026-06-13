@@ -3,7 +3,6 @@ package durableobjects
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -208,12 +207,19 @@ func (a *Actor) withInterrupt(fn func() (Result, error)) (Result, error) {
 	if a.cpuTimeout <= 0 || a.runtime == nil || a.runtime.VM == nil {
 		return fn()
 	}
+	timeoutErr := coded(CodeTimeout, "durable object CPU budget exceeded")
+	var interrupted atomic.Bool
 	timer := time.AfterFunc(a.cpuTimeout, func() {
-		a.runtime.VM.Interrupt(fmt.Errorf("durable object CPU budget exceeded"))
+		interrupted.Store(true)
+		a.runtime.VM.Interrupt(timeoutErr)
 	})
 	defer func() {
 		_ = timer.Stop()
 		a.runtime.VM.ClearInterrupt()
 	}()
-	return fn()
+	result, err := fn()
+	if err != nil && interrupted.Load() {
+		return Result{}, timeoutErr
+	}
+	return result, err
 }
