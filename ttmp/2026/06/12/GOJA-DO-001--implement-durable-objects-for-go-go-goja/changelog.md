@@ -160,3 +160,13 @@ Checked detailed ship-readiness subtasks after completing the hardening pass and
 
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/tasks.md — Detailed subtasks 26-80 checked
 
+
+## 2026-06-12
+
+Fixed real CLI smoke-test bug: alarm scheduler now creates the SQLite storage root before opening alarms.sqlite, so a fresh --storage directory no longer logs repeated unable-to-open-database errors
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/alarms.go — Create alarm index storage root before sql.Open
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Regression test for DispatchDueAlarms on missing storage root
+

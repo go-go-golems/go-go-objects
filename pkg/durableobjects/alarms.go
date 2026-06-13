@@ -15,6 +15,12 @@ func (f *SQLiteStorageFactory) alarmIndexPath() string {
 }
 
 func (f *SQLiteStorageFactory) openAlarmIndex(ctx context.Context) (*sql.DB, error) {
+	if f == nil || strings.TrimSpace(f.Root) == "" {
+		return nil, coded(CodeBadRequest, "sqlite storage root is required")
+	}
+	if err := os.MkdirAll(f.Root, 0o755); err != nil {
+		return nil, wrap(CodeStorageError, "create alarm index storage directory", err)
+	}
 	db, err := sql.Open("sqlite3", f.alarmIndexPath())
 	if err != nil {
 		return nil, wrap(CodeStorageError, "open alarm index", err)

@@ -254,6 +254,22 @@ func TestFetchGateway(t *testing.T) {
 	}
 }
 
+func TestDispatchDueAlarmsCreatesStorageRootBeforeObjects(t *testing.T) {
+	root := t.TempDir() + "/missing-root"
+	mgr, err := NewManager(Manifest{Objects: map[string]string{"COUNTER": "Counter"}}, NewBundle(counterBundle), NewSQLiteStorageFactory(root), Options{CPUTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	dispatched, err := mgr.DispatchDueAlarms(context.Background(), time.Now(), 10)
+	if err != nil {
+		t.Fatalf("DispatchDueAlarms() error = %v", err)
+	}
+	if dispatched != 0 {
+		t.Fatalf("dispatched = %d, want 0", dispatched)
+	}
+}
+
 func TestAlarmDispatchWakesEvictedActor(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(t)
