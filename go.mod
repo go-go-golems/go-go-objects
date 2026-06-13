@@ -1,6 +1,6 @@
 module github.com/go-go-golems/go-go-objects
 
-go 1.26.1
+go 1.26.3
 
 require (
 	github.com/dop251/goja v0.0.0-20251103141225-af2ceb9156d7
@@ -8,7 +8,7 @@ require (
 	github.com/go-go-golems/glazed v1.3.6
 	github.com/go-go-golems/go-go-goja v0.9.1
 	github.com/go-go-golems/logcopter v0.1.1
-	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/mattn/go-sqlite3 v1.14.42
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -50,8 +50,8 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/evanw/esbuild v0.25.12 // indirect
 	github.com/fatih/color v1.16.0 // indirect
-	github.com/go-go-golems/bobatea v0.1.5 // indirect
-	github.com/go-go-golems/geppetto v0.11.7 // indirect
+	github.com/go-go-golems/bobatea v0.1.6 // indirect
+	github.com/go-go-golems/geppetto v0.13.3 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-openapi/errors v0.22.0 // indirect
 	github.com/go-openapi/strfmt v0.23.0 // indirect
@@ -131,7 +131,7 @@ require (
 	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260311181403-84a4fc48630c // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
