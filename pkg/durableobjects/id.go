@@ -7,6 +7,8 @@ import (
 	"unicode"
 )
 
+const sha256HexLen = 64
+
 type ObjectID struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`

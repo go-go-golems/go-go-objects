@@ -1,7 +1,6 @@
 package durableobjects
 
 import (
-	"context"
 	"encoding/json"
 	"time"
 
@@ -150,8 +149,4 @@ func newStubObject(vm *goja.Runtime, manager *Manager, caller, target ObjectID) 
 	})
 	_ = obj.Set("id", map[string]any{"namespace": target.Namespace, "name": target.Name, "hash": target.Hash})
 	return obj
-}
-
-func ownerContext(vm *goja.Runtime) context.Context {
-	return runtimebridge.CurrentOwnerContext(vm)
 }

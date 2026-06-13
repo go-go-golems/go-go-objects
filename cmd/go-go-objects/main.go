@@ -69,7 +69,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "create manager: %v\n", err)
 		os.Exit(1)
 	}
-	defer mgr.Close(context.Background())
+	defer func() { _ = mgr.Close(context.Background()) }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

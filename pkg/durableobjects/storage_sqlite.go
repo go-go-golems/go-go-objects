@@ -35,10 +35,15 @@ func (f *SQLiteStorageFactory) Open(ctx context.Context, id ObjectID) (Storage, 
 	if id.IsZero() {
 		return nil, coded(CodeBadRequest, "object id is required")
 	}
-	path := f.pathFor(id)
+	path, err := f.pathFor(id)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G703 -- pathFor validates a SHA-256 hex object hash and verifies the final path stays under the configured storage root.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, wrap(CodeStorageError, "create object storage directory", err)
 	}
+	// codeql[go/path-injection] path is produced by pathFor, which validates the hash and checks the path remains below the storage root.
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, wrap(CodeStorageError, "open object sqlite database", err)
@@ -51,12 +56,56 @@ func (f *SQLiteStorageFactory) Open(ctx context.Context, id ObjectID) (Storage, 
 	return s, nil
 }
 
-func (f *SQLiteStorageFactory) pathFor(id ObjectID) string {
-	prefix := id.Hash
-	if len(prefix) > 2 {
-		prefix = prefix[:2]
+func (f *SQLiteStorageFactory) pathFor(id ObjectID) (string, error) {
+	if err := validateStorageHash(id.Hash); err != nil {
+		return "", err
 	}
-	return filepath.Join(f.Root, id.Namespace, prefix, id.Hash+".sqlite")
+	root, err := cleanStorageRoot(f.Root)
+	if err != nil {
+		return "", err
+	}
+	prefix := id.Hash[:2]
+	path := filepath.Join(root, "objects", prefix, id.Hash+".sqlite")
+	if err := ensurePathWithinRoot(root, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func cleanStorageRoot(root string) (string, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", coded(CodeBadRequest, "sqlite storage root is required")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", wrap(CodeStorageError, "resolve sqlite storage root", err)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func validateStorageHash(hash string) error {
+	if len(hash) != sha256HexLen {
+		return coded(CodeBadRequest, "object hash has invalid length")
+	}
+	for _, r := range hash {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return coded(CodeBadRequest, "object hash contains invalid character")
+	}
+	return nil
+}
+
+func ensurePathWithinRoot(root, path string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return wrap(CodeStorageError, "validate sqlite storage path", err)
+	}
+	if rel == "." || rel == "" || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return coded(CodeBadRequest, "sqlite storage path escapes storage root")
+	}
+	return nil
 }
 
 type SQLiteStorage struct {
@@ -305,7 +354,7 @@ func storageList(ctx context.Context, qe queryExecer, prefix string, limit int) 
 	if err != nil {
 		return nil, wrap(CodeStorageError, "list storage keys", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	ret := map[string]any{}
 	for rows.Next() {

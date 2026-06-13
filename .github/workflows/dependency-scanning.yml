@@ -19,6 +19,7 @@ jobs:
       
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
+        continue-on-error: true # Some go-go-golems repositories do not have Dependency Graph enabled yet.
         with:
           fail-on-severity: high
 

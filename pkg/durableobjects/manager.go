@@ -66,26 +66,35 @@ func NewManager(manifest Manifest, bundle *Bundle, storage StorageFactory, opts 
 	}, nil
 }
 
-func (m *Manager) Dispatch(ctx context.Context, env Envelope) (ret Result, err error) {
+func (m *Manager) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 	if m == nil {
 		return Result{}, coded(CodeExecutionError, "durable object manager is nil")
 	}
 	started := time.Now()
+	var dispatchErr error
 	m.emit(Event{Name: EventDispatchStart, ID: env.ID, Kind: env.Kind, Method: env.Method})
 	defer func() {
-		m.emit(Event{Name: EventDispatchEnd, ID: env.ID, Kind: env.Kind, Method: env.Method, Duration: time.Since(started), Error: err})
+		m.emit(Event{Name: EventDispatchEnd, ID: env.ID, Kind: env.Kind, Method: env.Method, Duration: time.Since(started), Error: dispatchErr})
 	}()
 	if env.ID.IsZero() {
-		return Result{}, coded(CodeBadRequest, "dispatch object id is required")
+		dispatchErr = coded(CodeBadRequest, "dispatch object id is required")
+		return Result{}, dispatchErr
 	}
 	if _, ok := m.manifest.ClassForNamespace(env.ID.Namespace); !ok {
-		return Result{}, coded(CodeUnknownNamespace, "unknown durable object namespace %q", env.ID.Namespace)
+		dispatchErr = coded(CodeUnknownNamespace, "unknown durable object namespace %q", env.ID.Namespace)
+		return Result{}, dispatchErr
 	}
 	actor, err := m.getOrStart(ctx, env.ID)
 	if err != nil {
-		return Result{}, err
+		dispatchErr = err
+		return Result{}, dispatchErr
 	}
-	return actor.Dispatch(ctx, env)
+	result, err := actor.Dispatch(ctx, env)
+	if err != nil {
+		dispatchErr = err
+		return Result{}, dispatchErr
+	}
+	return result, nil
 }
 
 func (m *Manager) emit(event Event) {
@@ -161,12 +170,12 @@ func (m *Manager) getOrStart(ctx context.Context, id ObjectID) (*Actor, error) {
 	m.mu.Unlock()
 
 	actor, err := m.startActor(ctx, id)
+	var actorToClose *Actor
 	m.mu.Lock()
 	if err == nil {
 		if existing := m.actors[id]; existing != nil {
-			actorToClose := actor
+			actorToClose = actor
 			actor = existing
-			go func() { _ = actorToClose.Close(context.Background()) }()
 		} else {
 			m.actors[id] = actor
 		}
@@ -176,6 +185,9 @@ func (m *Manager) getOrStart(ctx context.Context, id ObjectID) (*Actor, error) {
 	delete(m.starts, id)
 	close(call.done)
 	m.mu.Unlock()
+	if actorToClose != nil {
+		_ = actorToClose.Close(ctx)
+	}
 	return actor, err
 }
 
@@ -250,7 +262,7 @@ func (m *Manager) clearAlarmBeforeDispatch(ctx context.Context, id ObjectID) err
 	if err != nil {
 		return err
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 	return storage.DeleteAlarm(ctx)
 }
 

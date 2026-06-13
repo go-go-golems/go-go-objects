@@ -1,6 +1,6 @@
 module github.com/go-go-golems/go-go-objects
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/dop251/goja v0.0.0-20251103141225-af2ceb9156d7
@@ -137,7 +137,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-replace github.com/go-go-golems/go-go-goja => ../go-go-goja
 
 tool github.com/go-go-golems/logcopter/cmd/logcopter-gen

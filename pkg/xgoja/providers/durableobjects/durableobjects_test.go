@@ -372,7 +372,7 @@ func TestModuleMountsGatewayOnExternalHTTPHost(t *testing.T) {
 		Context: ctx,
 		Config:  config,
 		Host: testServiceHost{services: map[string][]any{
-			httpprovider.HostServiceKey: []any{httpprovider.ExternalHostService{Host: host, OwnsListen: true}},
+			httpprovider.HostServiceKey: {httpprovider.ExternalHostService{Host: host, OwnsListen: true}},
 		}},
 	})
 	if err != nil {

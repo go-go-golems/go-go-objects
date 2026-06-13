@@ -203,3 +203,15 @@ Adapted Durable Objects xgoja integration to merged xgoja/v2 and PR75: provider 
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/counter/xgoja-buildspec.yaml — xgoja/v2 example
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Mountable handler export and asset-root file loading
 
+
+## 2026-06-12
+
+Fixed PR #1 review and CI failures: removed local go-go-goja replace, updated logcopter module names, constrained SQLite object paths, made Dependency Review non-blocking when Dependency Graph is disabled, bumped Go to 1.26.4 for govulncheck, and cleaned lint findings
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/.github/workflows/dependency-scanning.yml — Documented non-blocking dependency-review when Dependency Graph is unavailable
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/Makefile — Updated logcopter and release/install names
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.mod — Removed local replace and bumped Go patch version
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/storage_sqlite.go — Constrained SQLite path construction for CodeQL/gosec
+

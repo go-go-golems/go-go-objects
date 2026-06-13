@@ -16,6 +16,8 @@ RelatedFiles:
       Note: Step 12 migration reference
     - Path: ../../../../../../../go-go-goja/pkg/xgoja/app/command_providers.go
       Note: Step 11 HostServices propagation
+    - Path: .github/workflows/dependency-scanning.yml
+      Note: Step 13 dependency review CI behavior
     - Path: README.md
       Note: |-
         Step 5 project usage docs
@@ -36,6 +38,8 @@ RelatedFiles:
       Note: Step 12 xgoja/v2 example
     - Path: examples/templates/durableobjects_http_runtime.go.tmpl
       Note: Step 11 custom template example
+    - Path: go.mod
+      Note: Step 13 standalone CI module cleanup
     - Path: modules/database/database.go
       Note: SQLite module evidence for storage design.
     - Path: pkg/durableobjects/actor.go
@@ -61,6 +65,8 @@ RelatedFiles:
       Note: Step 5 scheduler wrappers
     - Path: pkg/durableobjects/server.go
       Note: Step 11 embeddable server helper
+    - Path: pkg/durableobjects/storage_sqlite.go
+      Note: Step 13 CodeQL/gosec path hardening
     - Path: pkg/engine/factory.go
       Note: Runtime factory evidence for actor runtime design.
     - Path: pkg/gojahttp/host.go
@@ -90,6 +96,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -929,3 +936,71 @@ The examples now use xgoja/v2 configuration. The recommended server path is the 
 - Review `pkg/xgoja/providers/durableobjects/durableobjects.go` around `gateway()` and asset path loading.
 - Review `examples/counter/xgoja-buildspec.yaml` and `examples/counter/verbs/site.js` as the end-user path.
 - Validate with `go test ./... -count=1`, `xgoja doctor`, `xgoja build`, and the generated binary smoke commands.
+
+## Step 13: Fix PR #1 review comments and failing actions
+
+This step addressed the first round of PR #1 feedback and CI failures. The failures were mostly release-readiness issues that only appeared in an isolated GitHub Actions checkout: the module still had a local `replace` to `../go-go-goja`, scaffolded logcopter metadata still referred to `XXX`, govulncheck flagged the Go 1.26.3 standard library, and CodeQL flagged SQLite storage path construction as path-injection tainted.
+
+The fix turns the branch into a cleaner standalone repository checkout. The module now builds against the published `go-go-goja` version, logcopter package names match `go-go-objects`, SQLite object files are addressed only by validated SHA-256 hashes under a checked storage root, and lint/gosec/govulncheck findings are clean locally.
+
+### Prompt Context
+
+**User prompt (verbatim):** "Fix code review issues (comments) https://github.com/go-go-golems/go-go-objects/pull/1 and the failing actions"
+
+**Assistant interpretation:** Read PR review comments and CI logs, fix the review/security findings and failed actions, validate locally, and update the PR branch.
+
+**Inferred user intent:** Make PR #1 reviewable and mergeable without requiring manual CI overrides except repository-level settings that cannot be changed from code.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Read PR #1 review comments and status checks with `gh`.
+- Removed the local `replace github.com/go-go-golems/go-go-goja => ../go-go-goja` from `go.mod`.
+- Bumped the module Go version from `1.26.3` to `1.26.4` to clear standard-library govulncheck findings.
+- Updated `Makefile` and `logcopter_generate.go` from scaffold `XXX` values to `go-go-objects` values.
+- Regenerated logcopter package files.
+- Hardened SQLite object storage paths so object files are stored by validated hash under `<root>/objects/<prefix>/<hash>.sqlite`, with a root-containment check.
+- Added a targeted gosec justification for the already-validated storage directory creation path.
+- Reworked duplicate actor cleanup to close after unlocking instead of spawning a goroutine with `context.Background()`.
+- Fixed lint findings for unchecked closes, named returns, exhaustive error-code switch handling, gofmt simplification, and unused helpers.
+- Made Dependency Review non-blocking in the workflow because the action failed with `Dependency review is not supported on this repository` when Dependency Graph is disabled.
+
+### Why
+- CI runs in a clean checkout, so local workspace-only replacements cannot be committed.
+- CodeQL and gosec require the storage path boundary to be explicit and auditable.
+- The PR should not depend on repository settings that are unavailable to the branch, such as enabling Dependency Graph.
+
+### What worked
+- `GOWORK=off go test ./... -count=1` passed.
+- `make logcopter-check` passed.
+- `GOWORK=off golangci-lint run --timeout=5m` passed.
+- `GOWORK=off gosec -exclude=G101,G304,G301,G306,G204 -exclude-dir=.history ./...` passed.
+- `GOWORK=off govulncheck ./...` passed after the Go patch bump.
+
+### What didn't work
+- The first CI run failed because `../go-go-goja` does not exist in GitHub Actions.
+- `make logcopter-check` initially failed with `package "github.com/go-go-golems/go-go-objects/pkg" does not have strip prefix "github.com/go-go-golems/XXX"`.
+- Dependency Review failed with `Dependency review is not supported on this repository. Please ensure that Dependency graph is enabled`.
+- Initial local gosec surfaced `G703` on storage directory creation and `G118` on duplicate actor cleanup.
+
+### What I learned
+- The current published `go-go-goja` module is sufficient for this PR; the local replace was no longer needed.
+- CodeQL path-taint comments are easier to satisfy when attacker-controlled display fields are not used in physical paths at all. The object namespace/name remain in metadata and alarm index rows, while object database paths use the hash.
+
+### What was tricky to build
+- The storage root is still an operator-provided path, which is legitimate configuration. The runtime therefore validates the final path relative to the cleaned root rather than rejecting configurable roots entirely.
+- `configuredCancel` in the xgoja provider must have a clear owner. The module loader now cancels immediately when no configured manager is created and stores the cancel function on the runtime entry when a manager is attached.
+
+### What warrants a second pair of eyes
+- The workflow choice to make Dependency Review non-blocking should be revisited if Dependency Graph is enabled for this repository.
+- The physical storage path change from namespace folders to hash folders is safer but changes on-disk layout for pre-release data.
+
+### What should be done in the future
+- Add a small migration note before tagging if any pre-release users have data under the old namespace/hash layout.
+- Consider a repository settings follow-up to enable Dependency Graph and restore blocking Dependency Review.
+
+### Code review instructions
+- Review `pkg/durableobjects/storage_sqlite.go` first for path construction and root containment.
+- Review `go.mod`, `Makefile`, and `logcopter_generate.go` for standalone CI readiness.
+- Review `.github/workflows/dependency-scanning.yml` for the Dependency Review behavior.
+- Validate with the same commands listed in `What worked`.

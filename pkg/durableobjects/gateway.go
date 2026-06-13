@@ -95,7 +95,7 @@ func (g *Gateway) serveFetch(w http.ResponseWriter, r *http.Request) {
 	writeFetch(w, result.Response)
 }
 
-func parseRPCPath(path string) (namespace, name, method string, err error) {
+func parseRPCPath(path string) (string, string, string, error) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) != 4 || parts[0] != "rpc" {
 		return "", "", "", coded(CodeBadRequest, "rpc path must be /rpc/:namespace/:name/:method")
@@ -103,15 +103,14 @@ func parseRPCPath(path string) (namespace, name, method string, err error) {
 	return parts[1], parts[2], parts[3], nil
 }
 
-func parseFetchPath(path string) (namespace, name, rest string, err error) {
+func parseFetchPath(path string) (string, string, string, error) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) < 3 || parts[0] != "fetch" {
 		return "", "", "", coded(CodeBadRequest, "fetch path must be /fetch/:namespace/:name/*")
 	}
+	rest := "/"
 	if len(parts) > 3 {
 		rest = "/" + strings.Join(parts[3:], "/")
-	} else {
-		rest = "/"
 	}
 	return parts[1], parts[2], rest, nil
 }
@@ -197,6 +196,8 @@ func writeError(w http.ResponseWriter, err error, dev bool) {
 		status = http.StatusNotFound
 	case CodeTimeout:
 		status = http.StatusGatewayTimeout
+	case CodeActorStartFailed, CodeStorageError, CodeExecutionError:
+		status = http.StatusInternalServerError
 	}
 	message := "internal server error"
 	if dev || status < 500 {

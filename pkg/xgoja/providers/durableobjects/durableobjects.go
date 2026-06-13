@@ -200,7 +200,9 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 		configuredCancel()
 		return nil, err
 	}
-	if configured.Manager != nil && ctx.AddCloser != nil {
+	if configured.Manager == nil {
+		configuredCancel()
+	} else if ctx.AddCloser != nil {
 		manager := configured.Manager
 		if err := ctx.AddCloser(func(ctx context.Context) error {
 			configuredCancel()
@@ -213,10 +215,12 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 	}
 	external, err := externalGatewayService(ctx.Host)
 	if err != nil {
+		configuredCancel()
 		return nil, err
 	}
 	httpHost, err := externalHTTPHost(ctx.Host)
 	if err != nil {
+		configuredCancel()
 		return nil, err
 	}
 	return func(vm *goja.Runtime, moduleObj *goja.Object) {
@@ -227,6 +231,7 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			manager = configured.Manager
 			entry.manager = manager
 			entry.gateway = configured.Handler
+			entry.cancel = configuredCancel
 		}
 		if external.Manager != nil {
 			manager = external.Manager

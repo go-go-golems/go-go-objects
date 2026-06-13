@@ -10,18 +10,30 @@ import (
 	"time"
 )
 
-func (f *SQLiteStorageFactory) alarmIndexPath() string {
-	return filepath.Join(f.Root, "alarms.sqlite")
+func (f *SQLiteStorageFactory) alarmIndexPath() (string, error) {
+	if f == nil {
+		return "", coded(CodeBadRequest, "sqlite storage root is required")
+	}
+	root, err := cleanStorageRoot(f.Root)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(root, "alarms.sqlite")
+	if err := ensurePathWithinRoot(root, path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func (f *SQLiteStorageFactory) openAlarmIndex(ctx context.Context) (*sql.DB, error) {
-	if f == nil || strings.TrimSpace(f.Root) == "" {
-		return nil, coded(CodeBadRequest, "sqlite storage root is required")
+	path, err := f.alarmIndexPath()
+	if err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(f.Root, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, wrap(CodeStorageError, "create alarm index storage directory", err)
 	}
-	db, err := sql.Open("sqlite3", f.alarmIndexPath())
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, wrap(CodeStorageError, "open alarm index", err)
 	}
@@ -53,7 +65,7 @@ func (f *SQLiteStorageFactory) SetAlarmIndex(ctx context.Context, id ObjectID, d
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	_, err = db.ExecContext(ctx, `INSERT INTO object_alarms (object_hash, namespace, name, due_at_ms, updated_at_ms)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(object_hash) DO UPDATE SET namespace = excluded.namespace, name = excluded.name, due_at_ms = excluded.due_at_ms, updated_at_ms = excluded.updated_at_ms`,
@@ -69,7 +81,7 @@ func (f *SQLiteStorageFactory) DeleteAlarmIndex(ctx context.Context, id ObjectID
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(ctx, `DELETE FROM object_alarms WHERE object_hash = ?`, id.Hash); err != nil {
 		return wrap(CodeStorageError, "delete alarm index", err)
 	}
@@ -84,12 +96,12 @@ func (f *SQLiteStorageFactory) DueAlarms(ctx context.Context, now time.Time, lim
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	rows, err := db.QueryContext(ctx, `SELECT namespace, name, object_hash, due_at_ms FROM object_alarms WHERE due_at_ms <= ? ORDER BY due_at_ms LIMIT ?`, now.UnixMilli(), limit)
 	if err != nil {
 		return nil, wrap(CodeStorageError, "query due alarms", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var records []AlarmRecord
 	for rows.Next() {
@@ -118,7 +130,7 @@ func (f *SQLiteStorageFactory) ReconcileAlarmIndex(ctx context.Context) (AlarmRe
 	if err != nil {
 		return result, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	local, err := f.localAlarms(ctx)
 	if err != nil {
 		return result, err
@@ -188,7 +200,7 @@ func readLocalAlarm(ctx context.Context, path string) (AlarmRecord, bool, error)
 	if err != nil {
 		return AlarmRecord{}, false, wrap(CodeStorageError, "open object database for alarm reconciliation", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	id, ok, err := readObjectMetadata(ctx, db)
 	if err != nil || !ok {
 		return AlarmRecord{}, false, err
@@ -209,7 +221,7 @@ func readObjectMetadata(ctx context.Context, db *sql.DB) (ObjectID, bool, error)
 	if err != nil {
 		return ObjectID{}, false, nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	values := map[string]string{}
 	for rows.Next() {
 		var key string
@@ -238,7 +250,7 @@ func indexedAlarms(ctx context.Context, db *sql.DB) (map[string]AlarmRecord, err
 	if err != nil {
 		return nil, wrap(CodeStorageError, "query indexed alarms", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]AlarmRecord{}
 	for rows.Next() {
 		var namespace, name, hash string
