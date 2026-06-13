@@ -126,17 +126,42 @@ modules:
 
 `manifestPath` and `manifestAsset` are optional. If omitted, namespaces are derived from `exports.objects`.
 
-The provider also exposes a command provider mounted as `durableobjects serve` by default. In an xgoja buildspec, enable it with:
+With xgoja/v2 and the shared mountable HTTP handler ABI, the recommended generated-server path is to let JavaScript compose the server:
+
+```js
+const express = require("express");
+const durableobjects = require("durableobjects");
+
+__package__({ name: "durableobjects" });
+__verb__("site", { name: "site", output: "text" });
+function site() {
+  const app = express.app();
+  const gateway = durableobjects.gateway();
+  app.mount("/rpc", gateway);
+  app.mount("/fetch", gateway);
+}
+module.exports = { site };
+```
+
+Then use the HTTP provider's `serve` command set in `xgoja.yaml`. A complete v2 example lives at:
+
+```text
+examples/counter/xgoja-buildspec.yaml
+```
+
+The provider also exposes a direct command provider mounted as `durableobjects serve` for generated apps that do not need Express/JS composition:
 
 ```yaml
-commandProviders:
+commands:
   - id: durableobjects-serve
-    package: go-go-objects-durableobjects
+    type: provider.command-set
+    provider: durableobjects
     name: serve
     mount: durableobjects
     config:
       storageRoot: ./var/durable-objects
-      bundleAsset: durableobjects/objects.js
+      bundleAsset: counter-bundle
+      bundleAssetPath: objects.js
 ```
 
 The generated command runs a Durable Objects HTTP gateway directly:
@@ -145,7 +170,7 @@ The generated command runs a Durable Objects HTTP gateway directly:
 ./generated-app durableobjects serve --addr 127.0.0.1:8787
 ```
 
-For existing Go HTTP servers, use xgoja `target.kind: template` with `examples/templates/durableobjects_http_runtime.go.tmpl`. The generated package exposes `NewRuntime(ctx)`, `Runtime.Mount(mux)`, `Runtime.Handler()`, and `Runtime.Close(ctx)` so a host application can mount `/rpc/` and `/fetch/` on its own `http.Server`.
+For existing Go HTTP servers, use xgoja `type: template` artifacts with `examples/templates/durableobjects_http_runtime.go.tmpl`. The generated package exposes `NewRuntime(ctx)`, `Runtime.Mount(mux)`, `Runtime.Handler()`, and `Runtime.Close(ctx)` so a host application can mount `/rpc/` and `/fetch/` on its own `http.Server`.
 
 ## Storage and operations
 

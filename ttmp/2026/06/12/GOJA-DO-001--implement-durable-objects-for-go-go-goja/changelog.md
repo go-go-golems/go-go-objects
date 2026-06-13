@@ -192,3 +192,14 @@ Implemented missing xgoja UX pieces: Durable Objects serve command provider, reu
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/server.go — Embeddable server helper
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/serve.go — Provider-owned serve command
 
+
+## 2026-06-12
+
+Adapted Durable Objects xgoja integration to merged xgoja/v2 and PR75: provider now exports a mountable durableobjects.gateway() handler, examples use v2 schema and HTTP serve JS composition, bundleAssetPath supports embedded asset roots, and generated binary smoke tests passed for both HTTP serve and direct durableobjects serve
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/counter/verbs/site.js — Express app.mount composition
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/counter/xgoja-buildspec.yaml — xgoja/v2 example
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — Mountable handler export and asset-root file loading
+

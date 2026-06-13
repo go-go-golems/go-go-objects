@@ -18,6 +18,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/go-go-golems/glazed/pkg/cmds/fields"
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
+	"github.com/go-go-golems/go-go-goja/modules/express"
 	"github.com/go-go-golems/go-go-goja/pkg/engine"
 	"github.com/go-go-golems/go-go-goja/pkg/gojahttp"
 	"github.com/go-go-golems/go-go-goja/pkg/xgoja/app"
@@ -104,6 +105,46 @@ func TestGlazedConfigMapsIntoModuleRPC(t *testing.T) {
 		t.Fatalf("rpc call error = %v", err)
 	}
 	if got := ret.(goja.Value).Export(); got != int64(2) && got != float64(2) && got != 2 {
+		t.Fatalf("rpc result = %#v", got)
+	}
+}
+
+func TestGeneratedStyleRuntimeLoadsEmbeddedBundleAssetRootPath(t *testing.T) {
+	ctx := context.Background()
+	registry := providerapi.NewProviderRegistry()
+	if err := Register(registry); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	runtimeSpec := &app.RuntimeSpec{
+		Modules: []app.ModuleInstanceSpec{{
+			Package: PackageID,
+			Name:    "durableobjects",
+			Config: map[string]any{
+				"storageRoot":     t.TempDir(),
+				"bundleAsset":     "counter-bundle",
+				"bundleAssetPath": "objects.js",
+				"alarmInterval":   "0",
+				"idleInterval":    "0",
+			},
+		}},
+		Assets: []app.AssetSourceSpec{{ID: "counter-bundle", Path: "assets", Embed: true}},
+	}
+	services := app.HostServices{Assets: app.NewAssetStore(fstest.MapFS{
+		"assets/objects.js": &fstest.MapFile{Data: []byte(testBundle)},
+	}, runtimeSpec)}
+	factory := app.NewRuntimeFactory(registry, runtimeSpec, services)
+	rt, err := factory.NewRuntime(ctx)
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+	ret, err := rt.Owner.Call(ctx, "durableobjects.rpc", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`require("durableobjects").rpc("COUNTER", "asset-root", "increment", [9])`)
+	})
+	if err != nil {
+		t.Fatalf("rpc call error = %v", err)
+	}
+	if got := ret.(goja.Value).Export(); got != int64(9) && got != float64(9) && got != 9 {
 		t.Fatalf("rpc result = %#v", got)
 	}
 }
@@ -254,6 +295,62 @@ func TestModuleConfigLoadsBundleFromEmbeddedAsset(t *testing.T) {
 	}
 	if got := ret.(goja.Value).Export(); got != int64(3) && got != float64(3) && got != 3 {
 		t.Fatalf("rpc result = %#v", got)
+	}
+}
+
+func TestExpressMountsDurableObjectsGatewayHandler(t *testing.T) {
+	ctx := context.Background()
+	capability := newCapability()
+	host := gojahttp.NewHost(gojahttp.HostOptions{})
+	bundlePath, _ := writeBundleAndManifest(t)
+	config, err := json.Marshal(map[string]any{
+		"storageRoot":   t.TempDir(),
+		"bundlePath":    bundlePath,
+		"alarmInterval": "0",
+		"idleInterval":  "0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	durableLoader, err := capability.newModuleLoader(providerapi.ModuleSetupContext{Context: ctx, Config: config})
+	if err != nil {
+		t.Fatalf("newModuleLoader() error = %v", err)
+	}
+	factory, err := engine.NewRuntimeFactoryBuilder(
+		engine.WithImplicitDefaultRegistryModules(false),
+		engine.WithDataOnlyDefaultRegistryModules(true),
+	).WithModules(
+		engine.NativeModuleRegistrar{ModuleName: "durableobjects", Loader: durableLoader},
+		engine.NativeModuleRegistrar{ModuleName: "express", Loader: express.NewLoader(host)},
+	).Build()
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	rt, err := factory.NewRuntime(engine.WithStartupContext(ctx), engine.WithLifetimeContext(ctx))
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+	_, err = rt.Owner.Call(ctx, "mount durableobjects gateway", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`
+const express = require("express");
+const durableobjects = require("durableobjects");
+const gateway = durableobjects.gateway();
+express.app().mount("/rpc", gateway);
+express.app().mount("/fetch", gateway);
+`)
+	})
+	if err != nil {
+		t.Fatalf("mount gateway: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/rpc/COUNTER/mounted/increment", strings.NewReader(`[8]`))
+	w := httptest.NewRecorder()
+	host.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"result":8`) {
+		t.Fatalf("body = %s, want result 8", w.Body.String())
 	}
 }
 

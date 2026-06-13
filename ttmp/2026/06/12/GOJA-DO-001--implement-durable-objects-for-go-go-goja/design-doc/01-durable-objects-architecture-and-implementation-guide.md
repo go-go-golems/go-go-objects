@@ -36,6 +36,8 @@ RelatedFiles:
       Note: |-
         Existing HTTP-to-JS dispatch path, useful as a reference but not sufficient as the durable object gateway.
         HTTP-to-JS dispatch pattern for gateway design
+    - Path: ../../../../../../../go-go-goja/pkg/gojahttp/mountable.go
+      Note: Upstream mountable HTTP handler ABI used by Durable Objects
     - Path: ../../../../../../../go-go-goja/pkg/gojahttp/request_response.go
       Note: |-
         Plain request and response DTO model that should be reused for initial fetch dispatch.
@@ -80,6 +82,10 @@ RelatedFiles:
       Note: CLI bundle/manifest loading tests
     - Path: docs/release-notes.md
       Note: Release checklist and known limitations
+    - Path: examples/counter/verbs/site.js
+      Note: JS composition layer mounts durableobjects.gateway() into Express
+    - Path: examples/counter/xgoja-buildspec.yaml
+      Note: xgoja/v2 generated binary example using HTTP serve plus direct durableobjects serve
     - Path: examples/templates/durableobjects_http_runtime.go.tmpl
       Note: Custom xgoja template example for existing http.Server integration
     - Path: go-go-goja/ttmp/2026/06/12/GOJA-DO-001--implement-durable-objects-for-go-go-goja/sources/01-durable-objects-research.md
@@ -126,6 +132,7 @@ RelatedFiles:
         xgoja provider manifest-path is now optional
         xgoja provider now supports filesystem and embedded asset bundle configuration
         Unified provider config
+        Exports mountable durableobjects.gateway() handler for xgoja/v2 HTTP serve composition
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
       Note: |-
         xgoja provider registration
@@ -143,6 +150,7 @@ LastUpdated: 2026-06-12T16:35:00-04:00
 WhatFor: Use this as the intern-facing design and implementation guide for GOJA-DO-001.
 WhenToUse: Read before implementing durable object packages, storage, gateway routing, xgoja provider integration, tests, or follow-on compatibility work.
 ---
+
 
 
 

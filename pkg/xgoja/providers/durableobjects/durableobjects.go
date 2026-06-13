@@ -61,16 +61,18 @@ func Register(registry *providerapi.ProviderRegistry) error {
 }
 
 type settings struct {
-	Enabled       bool   `glazed:"enabled" json:"enabled"`
-	StorageRoot   string `glazed:"storage-root" json:"storageRoot"`
-	BundlePath    string `glazed:"bundle-path" json:"bundlePath"`
-	ManifestPath  string `glazed:"manifest-path" json:"manifestPath"`
-	BundleAsset   string `json:"bundleAsset"`
-	ManifestAsset string `json:"manifestAsset"`
-	CPUTimeout    string `glazed:"cpu-timeout" json:"cpuTimeout"`
-	IdleTimeout   string `glazed:"idle-timeout" json:"idleTimeout"`
-	AlarmInterval string `glazed:"alarm-interval" json:"alarmInterval"`
-	IdleInterval  string `glazed:"idle-interval" json:"idleInterval"`
+	Enabled           bool   `glazed:"enabled" json:"enabled"`
+	StorageRoot       string `glazed:"storage-root" json:"storageRoot"`
+	BundlePath        string `glazed:"bundle-path" json:"bundlePath"`
+	ManifestPath      string `glazed:"manifest-path" json:"manifestPath"`
+	BundleAsset       string `json:"bundleAsset"`
+	BundleAssetPath   string `json:"bundleAssetPath"`
+	ManifestAsset     string `json:"manifestAsset"`
+	ManifestAssetPath string `json:"manifestAssetPath"`
+	CPUTimeout        string `glazed:"cpu-timeout" json:"cpuTimeout"`
+	IdleTimeout       string `glazed:"idle-timeout" json:"idleTimeout"`
+	AlarmInterval     string `glazed:"alarm-interval" json:"alarmInterval"`
+	IdleInterval      string `glazed:"idle-interval" json:"idleInterval"`
 }
 
 type runtimeEntry struct {
@@ -123,7 +125,9 @@ func (c *capability) XGojaConfigSection(providerapi.SectionRequest, providerapi.
 			fields.New("bundlePath", fields.TypeString, fields.WithDefault("")),
 			fields.New("manifestPath", fields.TypeString, fields.WithDefault("")),
 			fields.New("bundleAsset", fields.TypeString, fields.WithDefault("")),
+			fields.New("bundleAssetPath", fields.TypeString, fields.WithDefault("")),
 			fields.New("manifestAsset", fields.TypeString, fields.WithDefault("")),
+			fields.New("manifestAssetPath", fields.TypeString, fields.WithDefault("")),
 			fields.New("cpuTimeout", fields.TypeString, fields.WithDefault("2s")),
 			fields.New("idleTimeout", fields.TypeString, fields.WithDefault("5m")),
 			fields.New("alarmInterval", fields.TypeString, fields.WithDefault("1s")),
@@ -277,6 +281,23 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			}
 			return vm.ToValue(result.Response)
 		})
+		mountableGateway := func() goja.Value {
+			if manager == nil {
+				panic(vm.NewGoError(fmt.Errorf("durableobjects manager is not initialized")))
+			}
+			handler := entry.gateway
+			if handler == nil {
+				handler = durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true})
+			}
+			obj := vm.NewObject()
+			if err := gojahttp.AttachHTTPHandler(vm, obj, handler); err != nil {
+				panic(vm.NewGoError(err))
+			}
+			_ = obj.Set("type", "durableobjects.gateway")
+			return obj
+		}
+		_ = exports.Set("gateway", mountableGateway)
+		_ = exports.Set("handler", mountableGateway)
 	}, nil
 }
 
@@ -385,7 +406,7 @@ func loadBundleSource(host providerapi.HostServices, cfg settings) (string, erro
 		return "", fmt.Errorf("durableobjects config cannot combine bundlePath and bundleAsset")
 	}
 	if bundleAsset != "" {
-		data, err := readAsset(host, bundleAsset, "bundle")
+		data, err := readAsset(host, bundleAsset, cfg.BundleAssetPath, "bundle")
 		if err != nil {
 			return "", err
 		}
@@ -414,7 +435,7 @@ func loadConfiguredManifest(host providerapi.HostServices, cfg settings) (durabl
 		return durableobjects.Manifest{}, fmt.Errorf("durableobjects config cannot combine bundleAsset and manifestPath")
 	}
 	if manifestAsset != "" {
-		data, err := readAsset(host, manifestAsset, "manifest")
+		data, err := readAsset(host, manifestAsset, cfg.ManifestAssetPath, "manifest")
 		if err != nil {
 			return durableobjects.Manifest{}, err
 		}
@@ -426,13 +447,22 @@ func loadConfiguredManifest(host providerapi.HostServices, cfg settings) (durabl
 	return durableobjects.Manifest{}, nil
 }
 
-func readAsset(host providerapi.HostServices, id, kind string) ([]byte, error) {
+func readAsset(host providerapi.HostServices, id, assetPath, kind string) ([]byte, error) {
 	if host == nil || host.AssetResolver() == nil {
 		return nil, fmt.Errorf("durableobjects %s asset %q requires a host asset resolver", kind, id)
 	}
 	fsys, path, ok := host.AssetResolver().ResolveAsset(id)
 	if !ok {
 		return nil, fmt.Errorf("durableobjects %s asset %q was not found", kind, id)
+	}
+	if strings.TrimSpace(assetPath) != "" {
+		base := strings.Trim(strings.TrimSpace(path), "/")
+		rel := strings.Trim(strings.TrimSpace(assetPath), "/")
+		if base == "" {
+			path = rel
+		} else {
+			path = base + "/" + rel
+		}
 	}
 	data, err := fs.ReadFile(fsys, path)
 	if err != nil {
@@ -568,7 +598,9 @@ func moduleConfigSchema() json.RawMessage {
     "bundlePath": {"type": "string", "description": "Path to a CommonJS bundle exporting objects"},
     "manifestPath": {"type": "string", "description": "Optional path to a JSON/YAML namespace manifest"},
     "bundleAsset": {"type": "string", "description": "Embedded asset id for a CommonJS bundle exporting objects"},
+    "bundleAssetPath": {"type": "string", "description": "Optional file path inside the embedded bundle asset root"},
     "manifestAsset": {"type": "string", "description": "Optional embedded asset id for a JSON/YAML namespace manifest"},
+    "manifestAssetPath": {"type": "string", "description": "Optional file path inside the embedded manifest asset root"},
     "cpuTimeout": {"type": "string", "description": "Per-dispatch JavaScript CPU timeout"},
     "idleTimeout": {"type": "string", "description": "Idle actor eviction timeout"},
     "alarmInterval": {"type": "string", "description": "Background alarm scheduler interval; 0 disables the loop"},
@@ -583,8 +615,11 @@ func TypeScriptModule() *spec.Module {
 		RawDTS: []string{
 			"export interface FetchRequest { method: string; url?: string; path: string; query?: Record<string, unknown>; headers?: Record<string, string>; body?: unknown; rawBody?: string }",
 			"export interface FetchResponse { status: number; headers?: Record<string, string>; body?: unknown }",
+			"export interface MountableHTTPHandler { readonly type?: string }",
 			"export function rpc(namespace: string, name: string, method: string, args?: unknown[]): unknown;",
 			"export function fetch(namespace: string, name: string, request: FetchRequest): FetchResponse;",
+			"export function gateway(): MountableHTTPHandler;",
+			"export function handler(): MountableHTTPHandler;",
 		},
 	}
 }

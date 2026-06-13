@@ -137,3 +137,4 @@ WhenToUse: Use while implementing or reviewing the Durable Objects work.
 - [x] Add xgoja custom template example for generating an embeddable Durable Objects HTTP runtime package instead of a main/command.
 - [x] Add tests covering durableobjects serve command provider creation and server behavior.
 - [x] Document xgoja durableobjects serve usage and custom template mode for existing http.Server applications.
+- [x] Update Durable Objects xgoja integration for xgoja/v2 schema and PR75 mountable HTTP handler ABI.

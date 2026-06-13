@@ -1,11 +1,12 @@
-# Example xgoja-style module configuration for a self-contained Durable Objects bundle.
-# The generated runtime spec should declare an embedded asset with id
-# durableobjects/counter.js pointing at examples/counter/objects.js.
-modules:
-  - package: go-go-objects-durableobjects
-    name: durableobjects
-    config:
-      storageRoot: ./var/durable-objects
-      bundleAsset: durableobjects/counter.js
-      alarmInterval: 1s
-      idleInterval: 1m
+# xgoja/v2 runtime module fragment for embedding the counter Durable Objects bundle.
+# In a full spec, define an assets source/artifact with id `counter-bundle`
+# rooted at this directory so `bundleAssetPath: objects.js` can read the file.
+runtime:
+  modules:
+    - provider: durableobjects
+      name: durableobjects
+      as: durableobjects
+      config:
+        storageRoot: ./var/durable-objects
+        bundleAsset: counter-bundle
+        bundleAssetPath: objects.js

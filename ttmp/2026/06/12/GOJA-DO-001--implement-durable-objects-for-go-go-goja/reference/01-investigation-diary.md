@@ -12,6 +12,8 @@ DocType: reference
 Intent: long-term
 Owners: []
 RelatedFiles:
+    - Path: ../../../../../../../go-go-goja/cmd/xgoja/doc/17-xgoja-v2-reference.md
+      Note: Step 12 migration reference
     - Path: ../../../../../../../go-go-goja/pkg/xgoja/app/command_providers.go
       Note: Step 11 HostServices propagation
     - Path: README.md
@@ -28,6 +30,10 @@ RelatedFiles:
       Note: Step 7 CLI loading tests
     - Path: docs/release-notes.md
       Note: Step 10 release validation notes
+    - Path: examples/counter/verbs/site.js
+      Note: Step 12 JS HTTP serve composition
+    - Path: examples/counter/xgoja-buildspec.yaml
+      Note: Step 12 xgoja/v2 example
     - Path: examples/templates/durableobjects_http_runtime.go.tmpl
       Note: Step 11 custom template example
     - Path: modules/database/database.go
@@ -67,6 +73,7 @@ RelatedFiles:
         Step 8 optional manifest provider
         Step 9 embedded asset provider configuration
         Step 10 provider hardening
+        Step 12 mountable handler export
     - Path: pkg/xgoja/providers/durableobjects/durableobjects_test.go
       Note: |-
         Step 6 provider tests
@@ -83,6 +90,7 @@ LastUpdated: 2026-06-12T16:40:00-04:00
 WhatFor: Use this to understand how the GOJA-DO-001 design guide was researched and produced.
 WhenToUse: Read when resuming or reviewing the Durable Objects analysis work.
 ---
+
 
 
 
@@ -858,3 +866,66 @@ The xgoja side also needed one framework-level fix: command providers now receiv
 - Review `pkg/durableobjects/server.go` for embeddable server semantics.
 - Review `go-go-goja/pkg/xgoja/app/command_providers.go` for the HostServices propagation patch.
 - Validate with `go test ./... -count=1` in `go-go-objects` and `go test ./pkg/xgoja/app -count=1` in `go-go-goja`.
+
+## Step 12: Adapt to xgoja/v2 and mountable HTTP handlers
+
+This step merged the updated `go-go-goja` main branch that includes xgoja/v2 and PR75's mountable HTTP handler ABI, then adjusted the Durable Objects provider to use the new composition model. Durable Objects now exports a JavaScript-visible `durableobjects.gateway()` handler object that carries the shared hidden `gojahttp` HTTP handler reference, so normal xgoja HTTP serve scripts can mount it with Express.
+
+The examples now use xgoja/v2 configuration. The recommended server path is the HTTP provider's `serve` command running a JS verb that mounts `durableobjects.gateway()` under `/rpc` and `/fetch`. The direct `durableobjects serve` command remains available for generated binaries that want a dedicated gateway server without an Express composition layer.
+
+### Prompt Context
+
+**User prompt (verbatim):** "so, we update xgoja significantly, when you merge origin/main into go-go-goja, we now have a new xgoja (with migration guide), and we also allow a JS module to expose interfaces to be mounted on the serve verb through JS (I think, see https://github.com/go-go-golems/go-go-goja/pull/75)"
+
+**Assistant interpretation:** Merge the latest xgoja work, read the new migration/mounting model, and adapt Durable Objects to the new xgoja/v2 and mountable-handler APIs.
+
+**Inferred user intent:** Avoid building a parallel or obsolete serving path; integrate Durable Objects with the current xgoja serve composition model.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Merged `origin/main` into `go-go-goja`, bringing in xgoja/v2 and PR75.
+- Read `cmd/xgoja/doc/16-migrating-to-xgoja-v2.md`, `17-xgoja-v2-reference.md`, `pkg/gojahttp/mountable.go`, Express mounting code, and HTTP serve code.
+- Added `durableobjects.gateway()` and `durableobjects.handler()` exports that attach a Go `http.Handler` via `gojahttp.AttachHTTPHandler`.
+- Extended embedded asset config with `bundleAssetPath` and `manifestAssetPath` so xgoja/v2 asset source roots can contain `objects.js` rather than pretending the asset ID is a single file.
+- Converted `examples/counter/xgoja-buildspec.yaml` to xgoja/v2.
+- Added `examples/counter/verbs/site.js`, which mounts the gateway through Express under `/rpc` and `/fetch`.
+- Updated README and release notes.
+- Built a generated binary from the v2 spec and smoke-tested both paths:
+  - `serve durableobjects site` using HTTP serve + JS composition.
+  - `durableobjects serve` using the direct provider command.
+
+### Why
+- xgoja/v2 separates runtime modules, command sets, sources, commands, and artifacts. The old v1-style example and the old mental model around command providers needed to be updated.
+- PR75 provides the right ABI for Go-backed modules to expose mountable HTTP handlers to JavaScript. Durable Objects should participate in that mechanism instead of only auto-mounting from Go.
+
+### What worked
+- `xgoja doctor -f examples/counter/xgoja-buildspec.yaml` passed.
+- `xgoja build -f examples/counter/xgoja-buildspec.yaml --output /tmp/durableobjects-counter` produced a working binary.
+- `serve durableobjects site` served `/healthz`, `/rpc/COUNTER/generated/increment`, and `/fetch/COUNTER/generated/count` successfully.
+- `durableobjects serve` served `/rpc` and `/fetch` directly.
+
+### What didn't work
+- The first v2 example used short provider IDs (`http`, `durableobjects`), but current v2 command provider resolution expected registered provider package IDs such as `go-go-goja-http` and `go-go-objects-durableobjects`. Updating the provider IDs fixed the generated command tree.
+- Mounting the Durable Objects gateway at `/` shadowed `/healthz` because mounted handlers are checked before route handlers. The JS example now mounts `/rpc` and `/fetch` explicitly.
+
+### What I learned
+- In xgoja/v2, `template` artifacts are for generated code shape, not HTTP runtime behavior. Runtime HTTP behavior belongs in modules, command sets, host services, and JS route setup.
+- The shared mountable handler ABI is the right way for Durable Objects to compose with Express and the HTTP serve command.
+
+### What was tricky to build
+- xgoja/v2 embedded assets represent source roots. The provider needed `bundleAssetPath` so it can read `objects.js` inside an embedded asset root.
+- Express `app.mount` does not strip prefixes by default, which is exactly what the Durable Objects gateway needs when mounted at `/rpc` and `/fetch`.
+
+### What warrants a second pair of eyes
+- Whether v2 should allow short provider IDs for command providers, or whether examples should consistently use package IDs.
+- Whether `durableobjects.gateway()` should expose separate `rpcGateway()` and `fetchGateway()` helpers later.
+
+### What should be done in the future
+- Add the generated-binary smoke commands to a scripted integration test once build time is acceptable in CI.
+- Consider de-emphasizing the direct `durableobjects serve` command if the JS composition path proves sufficient.
+
+### Code review instructions
+- Review `pkg/xgoja/providers/durableobjects/durableobjects.go` around `gateway()` and asset path loading.
+- Review `examples/counter/xgoja-buildspec.yaml` and `examples/counter/verbs/site.js` as the end-user path.
+- Validate with `go test ./... -count=1`, `xgoja doctor`, `xgoja build`, and the generated binary smoke commands.
