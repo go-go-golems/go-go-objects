@@ -9,13 +9,18 @@ Topics:
 DocType: reference
 Intent: long-term
 Owners: []
-RelatedFiles: []
+RelatedFiles:
+    - Path: pkg/durableobjects/actor.go
+      Note: Step 2 Promise-aware dispatch implementation
+    - Path: pkg/durableobjects/durableobjects_test.go
+      Note: Step 2 async dispatch tests
 ExternalSources: []
 Summary: Chronological diary for adding Promise-aware async Durable Objects dispatch.
 LastUpdated: 2026-06-14T18:00:00Z
 WhatFor: Use this to understand how GOJA-DO-002 was researched and implemented.
 WhenToUse: Read before resuming or reviewing async dispatch work.
 ---
+
 
 # Diary
 
@@ -84,3 +89,78 @@ The design intentionally chooses a conservative first implementation: await retu
 - Ticket path: `ttmp/2026/06/14/GOJA-DO-002--add-async-promise-aware-durable-objects-dispatch`.
 - Primary design doc: `design-doc/01-async-durable-objects-dispatch-design-guide.md`.
 - Evidence file: `various/01-line-evidence.md`.
+
+## Step 2: Add tests and implement Promise-aware dispatch
+
+This step implemented the first async dispatch milestone. I added regression tests that intentionally failed against the synchronous actor implementation, then refactored `Actor.Dispatch` so RPC, fetch, and alarm handlers can return either plain values or Promises. The actor now waits for a returned Promise to settle before converting the result into a Durable Objects `Result`.
+
+The implementation keeps the conservative runtime model from the design guide: one dispatch remains active until its Promise settles. That means async handlers now work, but the runtime still does not implement Cloudflare-style event interleaving, input gates, or output gates.
+
+### Prompt Context
+
+**User prompt (verbatim):** "Then add tasks, and implement it step by step, keeping a detailed diary as you work, committing at appropriate intervals."
+
+**Assistant interpretation:** Convert the design ticket into tasks and begin implementation in focused, documented, committed slices.
+
+**Inferred user intent:** Move from design to working code while preserving a clear implementation history and review trail.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Added implementation tasks to `GOJA-DO-002`.
+- Extended the test counter object with async RPC, rejected RPC, pending Promise, async fetch, async alarm, and bad async transaction cases.
+- Added tests for:
+  - fulfilled async RPC;
+  - rejected async RPC;
+  - pending Promise timeout;
+  - async transaction callback rejection;
+  - fulfilled async fetch;
+  - existing alarm dispatch through an async `alarm()` handler.
+- Refactored `pkg/durableobjects/actor.go` into invocation, Promise awaiting, and conversion phases.
+- Added owner-thread Promise polling using `RuntimeOwner.Call()`.
+- Preserved typed `*durableobjects.Error` values that are thrown through Go-backed JS callbacks.
+- Kept `state.storage.transaction` synchronous-only.
+
+### Why
+- The current implementation immediately converted returned `goja.Value` values and therefore returned Promise objects instead of fulfilled values.
+- Cloudflare Durable Objects code commonly uses async RPC/fetch/alarm handlers, so this was the most important semantic gap after the MVP runtime landed.
+
+### What worked
+- The initial targeted test run failed exactly on the expected sync-only gaps:
+  - `TestAsyncRPCDispatchAwaitsFulfilledPromise` returned a non-number Promise result.
+  - `TestAsyncRPCDispatchPropagatesRejectedPromise` succeeded instead of surfacing rejection.
+  - `TestAsyncRPCDispatchPendingPromiseTimesOut` succeeded instead of timing out.
+  - `TestAsyncFetchDispatchAwaitsFulfilledPromise` returned a default 200/empty body instead of awaited 202/4.
+- After the refactor, the targeted async/alarm tests passed.
+- `GOWORK=off go test ./... -count=1` passed.
+
+### What didn't work
+- The first refactor draft tried to format rejection values with an invalid `goja.Value` runtime access pattern and referenced non-existent error helper APIs. I corrected this before writing the real file by inspecting `pkg/durableobjects/errors.go`.
+- Go-backed JS errors thrown through `panic(vm.NewGoError(err))` arrive wrapped by goja. The actor now attempts to recover nested durable errors from `*goja.Exception` so `CodeBadRequest` from async transaction rejection is preserved.
+
+### What I learned
+- Promise awaiting fits cleanly between invocation and conversion. Trying to keep conversion inside the original owner call would make Promise waiting harder to reason about.
+- The existing active-dispatch counter did not need changes: keeping the dispatch active while awaiting the Promise also protects the actor from idle eviction.
+
+### What was tricky to build
+- The main sharp edge was error-code preservation. A storage transaction callback error crosses the JS boundary as a Go error wrapped in a goja exception. If actor dispatch blindly wraps it as `CodeExecutionError`, callers lose the more precise `CodeBadRequest`. The fix was to add a small `durableErrorFrom` extraction helper and use it before wrapping errors.
+- The Promise wait loop must inspect `promise.State()` and `promise.Result()` on the runtime owner thread. The implementation polls through short `RuntimeOwner.Call()` calls and sleeps outside the owner.
+
+### What warrants a second pair of eyes
+- The timeout path currently uses the existing `CPUTimeout` as the full dispatch/Promise wait budget. This matches the design, but the option name may become confusing.
+- Rejection formatting currently prefers `error.message` when available and otherwise falls back to `value.String()`. Rich stack traces are still a future improvement.
+
+### What should be done in the future
+- Update README, release notes, examples, and TypeScript declarations to document Promise-aware dispatch and non-goals.
+- Run the full lint/security validation suite after documentation updates.
+
+### Code review instructions
+- Start with `pkg/durableobjects/actor.go` and read the flow in this order: `Dispatch`, `invokeDispatch`, `awaitValue`, `convertDispatchValue`.
+- Then review `pkg/durableobjects/durableobjects_test.go` for the async behavior contract.
+- Validate with `GOWORK=off go test ./... -count=1`.
+
+### Technical details
+- Focused failing command before implementation:
+  `GOWORK=off go test ./pkg/durableobjects -run 'TestAsync|TestAlarmDispatchWakesEvictedActor|TestDispatchDueAlarmsReconcilesMissingIndex|TestAlarmSchedulerTick' -count=1`
+- Passing command after implementation:
+  `GOWORK=off go test ./... -count=1`

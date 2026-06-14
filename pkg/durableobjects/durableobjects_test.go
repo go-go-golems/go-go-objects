@@ -23,6 +23,23 @@ class Counter {
     this.state.storage.put("count", next);
     return next;
   }
+  async asyncIncrement(by) {
+    await Promise.resolve();
+    return this.increment(by);
+  }
+  async rejectAsync() {
+    await Promise.resolve();
+    throw new Error("async boom");
+  }
+  pending() {
+    return new Promise(() => {});
+  }
+  badAsyncTransaction() {
+    return this.state.storage.transaction(async tx => {
+      await Promise.resolve();
+      tx.put("bad", true);
+    });
+  }
   value() {
     return this.state.storage.get("count") || 0;
   }
@@ -36,6 +53,9 @@ class Counter {
   fetch(req) {
     if (req.path === "/count") {
       return { status: 200, headers: { "X-Counter": "yes" }, body: String(this.state.storage.get("count") || 0) };
+    }
+    if (req.path === "/async-count") {
+      return Promise.resolve({ status: 202, headers: { "X-Async": "yes" }, body: String(this.state.storage.get("count") || 0) });
     }
     return { status: 404, body: "not found" };
   }
@@ -51,7 +71,8 @@ class Counter {
     while (Date.now() < end) {}
     return true;
   }
-  alarm() {
+  async alarm() {
+    await Promise.resolve();
     const current = this.state.storage.get("alarmCount") || 0;
     this.state.storage.put("alarmCount", current + 1);
   }
@@ -218,6 +239,77 @@ func TestConcurrentFirstDispatchStartsOneActor(t *testing.T) {
 	}
 }
 
+func TestAsyncRPCDispatchAwaitsFulfilledPromise(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-rpc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rpcNumber(t, mgr, id, "asyncIncrement", []any{7}); got != 7 {
+		t.Fatalf("asyncIncrement = %v, want 7", got)
+	}
+	if got := rpcNumber(t, mgr, id, "value", nil); got != 7 {
+		t.Fatalf("value after asyncIncrement = %v, want 7", got)
+	}
+}
+
+func TestAsyncRPCDispatchPropagatesRejectedPromise(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-reject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "rejectAsync", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch rejectAsync succeeded, want error")
+	}
+	if got := CodeOf(err); got != CodeExecutionError {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeExecutionError, err)
+	}
+}
+
+func TestAsyncRPCDispatchPendingPromiseTimesOut(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 10 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "async-pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "pending", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch pending succeeded, want timeout")
+	}
+	if got := CodeOf(err); got != CodeTimeout {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeTimeout, err)
+	}
+}
+
+func TestAsyncTransactionCallbackStillRejected(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-tx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "badAsyncTransaction", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch badAsyncTransaction succeeded, want error")
+	}
+	if got := CodeOf(err); got != CodeBadRequest {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeBadRequest, err)
+	}
+}
+
 func TestCounterRPCPersistsAcrossEviction(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(t)
@@ -283,6 +375,30 @@ func TestFetchGateway(t *testing.T) {
 	}
 	if got := w.Header().Get("X-Counter"); got != "yes" {
 		t.Fatalf("X-Counter = %q, want yes", got)
+	}
+}
+
+func TestAsyncFetchDispatchAwaitsFulfilledPromise(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-fetch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rpcNumber(t, mgr, id, "increment", []any{4})
+
+	gateway := NewGateway(mgr, GatewayOptions{DevErrors: true})
+	req := httptest.NewRequest(http.MethodGet, "/fetch/COUNTER/async-fetch/async-count", nil)
+	w := httptest.NewRecorder()
+	gateway.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "4" {
+		t.Fatalf("body = %q, want 4", got)
+	}
+	if got := w.Header().Get("X-Async"); got != "yes" {
+		t.Fatalf("X-Async = %q, want yes", got)
 	}
 }
 
