@@ -121,6 +121,9 @@ func (a *Actor) invokeDispatch(ctx context.Context, env Envelope) (dispatchValue
 		return a.invokeDispatchOnOwner(ctx, vm, env)
 	})
 	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return dispatchValue{}, ctxErr
+		}
 		return dispatchValue{}, preserveCodeOrWrap(CodeExecutionError, "execute durable object dispatch", err)
 	}
 	value, ok := ret.(dispatchValue)
@@ -295,6 +298,9 @@ func (a *Actor) convertRPCResult(ctx context.Context, value goja.Value) (Result,
 		return payload, nil
 	})
 	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return Result{}, ctxErr
+		}
 		return Result{}, preserveCodeOrWrap(CodeExecutionError, "convert durable object rpc result", err)
 	}
 	payload, ok := ret.([]byte)
@@ -309,6 +315,9 @@ func (a *Actor) convertFetchResult(ctx context.Context, value goja.Value) (Resul
 		return fetchResponseFromValue(vm, value), nil
 	})
 	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return Result{}, ctxErr
+		}
 		return Result{}, preserveCodeOrWrap(CodeExecutionError, "convert durable object fetch result", err)
 	}
 	response, ok := ret.(FetchResponse)

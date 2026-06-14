@@ -223,3 +223,75 @@ The counter example now uses `async increment` and `async fetch`, so the CLI and
 
 ### Technical details
 - Validation command: `GOWORK=off go test ./... -count=1`.
+
+## Step 4: Final validation and generated-binary smoke tests
+
+This step ran the full validation suite after the code and documentation updates. The main correction during validation was timeout normalization: a CPU-bound JavaScript loop can cause `RuntimeOwner.Call` to return a context deadline error before the interrupt flag is observed, so `invokeDispatch` now checks the dispatch context and returns `CodeTimeout` instead of wrapping that owner-call error as `CodeExecutionError`.
+
+After that fix, unit tests, lint, security scans, docmgr validation, and both generated-binary serve paths passed. The counter example now exercises async object handlers in the generated binary because `increment` and `fetch` are async in `examples/counter/objects.js`.
+
+### Prompt Context
+
+**User prompt (verbatim):** (same as Step 2)
+
+**Assistant interpretation:** Complete the implementation loop with full validation, generated-binary smoke testing, and documentation of any final fixes.
+
+**Inferred user intent:** Ensure the async dispatch implementation is ready for review and not just locally plausible.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Ran `GOWORK=off go test ./... -count=1`.
+- Ran `GOWORK=off golangci-lint run --timeout=5m`.
+- Ran `GOWORK=off gosec -exclude=G101,G304,G301,G306,G204 -exclude-dir=.history ./...`.
+- Ran `GOWORK=off govulncheck ./...`.
+- Ran `docmgr doctor --ticket GOJA-DO-002 --stale-after 30`.
+- Built the xgoja generated binary from `examples/counter/xgoja-buildspec.yaml`.
+- Smoke-tested `serve durableobjects site` and direct `durableobjects serve`.
+- Updated the workspace `go.work` from `1.26.1` to `1.26.4` locally so the generated xgoja build could run against the module's Go version.
+
+### Why
+- The example changed to async handlers, so generated-binary serving needed to be validated, not just unit tests.
+- The timeout failure only appeared during the full test run, so validation found a real edge case.
+
+### What worked
+- `GOWORK=off go test ./... -count=1` passed after timeout normalization.
+- `GOWORK=off golangci-lint run --timeout=5m` passed with 0 issues.
+- `gosec` passed with 0 issues.
+- `govulncheck` reported no reachable vulnerabilities.
+- `docmgr doctor` passed.
+- xgoja build produced `/tmp/durableobjects-counter-async`.
+- `GET /healthz`, `POST /rpc/COUNTER/generated/increment`, and `GET /fetch/COUNTER/generated/count` passed through the HTTP `serve durableobjects site` path.
+- Direct `durableobjects serve` passed `/rpc` and `/fetch` smoke tests.
+
+### What didn't work
+- The first full test run failed:
+  `TestRPCGatewayReportsTimeout ... status = 500 ... code":"execution_error" ... context deadline exceeded, want 504`.
+- The first xgoja smoke attempt failed because the workspace `go.work` still declared `go 1.26.1` while `go-go-objects/go.mod` now requires `go 1.26.4`.
+- The smoke test created an untracked `go-go-goja/var/` storage directory, which I removed.
+
+### What I learned
+- Timeout normalization must account for both explicit VM interruption and owner-call cancellation paths.
+- Generated binary smoke tests are useful for catching workspace and example drift after code changes.
+
+### What was tricky to build
+- The same timeout can surface through different mechanisms: a VM interrupt error, a dispatch context deadline, or a runtime-owner scheduling/call cancellation. The actor should present all of these as `CodeTimeout` when they occur under the dispatch budget.
+
+### What warrants a second pair of eyes
+- Whether updating the workspace `go.work` should be committed somewhere else or left as local workspace maintenance. The `go-go-objects` repository itself is cleanly validated with `GOWORK=off`.
+
+### What should be done in the future
+- Push the branch and let GitHub Actions validate the implementation in a clean environment.
+- Consider adding generated-binary smoke testing to CI later.
+
+### Code review instructions
+- Review the final timeout path in `pkg/durableobjects/actor.go`, especially `invokeDispatch`, `withInterrupt`, and `timeoutOrContextError`.
+- Validate with the full command list in `What I did`.
+
+### Technical details
+- Generated binary build command:
+  `go run ./cmd/xgoja build -f ../go-go-objects/examples/counter/xgoja-buildspec.yaml --output /tmp/durableobjects-counter-async`
+- HTTP composition smoke command:
+  `/tmp/durableobjects-counter-async serve durableobjects site --http-listen 127.0.0.1:18889 --durableobjects-storage-root /tmp/do-async-http`
+- Direct serve smoke command:
+  `/tmp/durableobjects-counter-async durableobjects serve --addr 127.0.0.1:18890 --durableobjects-storage-root /tmp/do-async-direct`

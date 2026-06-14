@@ -36,3 +36,13 @@ Updated public documentation and examples for Promise-aware dispatch: README, re
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/counter/objects.js — Async counter example
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — TypeScript/config description updates
 
+
+## 2026-06-14
+
+Completed async dispatch validation: normalized owner-call deadline errors to CodeTimeout, passed go test, golangci-lint, gosec, govulncheck, docmgr doctor, and xgoja generated-binary HTTP/direct serve smoke tests
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/actor.go — Timeout normalization for owner-call deadline errors
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/14/GOJA-DO-002--add-async-promise-aware-durable-objects-dispatch/tasks.md — Validation task completion
+
