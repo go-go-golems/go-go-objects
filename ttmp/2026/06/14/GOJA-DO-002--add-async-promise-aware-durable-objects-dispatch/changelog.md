@@ -95,3 +95,14 @@ Fixed async dispatch serialization review finding by adding a context-aware per-
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Regression for concurrent async lost updates
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/manager.go — Initializes actor dispatch gate
 
+
+## 2026-06-14
+
+Fixed release scaffolding placeholders by replacing XXX with go-go-objects in GoReleaser and release workflow config; snapshot single-target release now succeeds
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/.github/workflows/release.yaml — Disabled docs publish job placeholders
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/.goreleaser.yaml — GoReleaser project/build/package metadata
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.sum — go mod tidy removed stale go-go-goja v0.9.1 checksums
+

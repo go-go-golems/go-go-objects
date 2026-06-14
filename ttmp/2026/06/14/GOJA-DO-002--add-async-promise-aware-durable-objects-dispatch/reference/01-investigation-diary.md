@@ -593,3 +593,90 @@ Useful? React with 👍 / 👎."
 ### Technical details
 - go-go-goja evidence: `runtimeowner.Call` posts a callback and returns when that callback returns; it does not know that a returned `goja.Promise` is part of a larger actor event.
 - The dispatch gate spans `invokeDispatch`, `awaitDispatchValue`, and `convertDispatchValue`.
+
+## Step 10: Fix release scaffolding placeholders
+
+This step fixed the snapshot release failure caused by leftover scaffold names in the GoReleaser configuration. GoReleaser was trying to build `./cmd/XXX` into a binary named `XXX`, which does not exist in this repository.
+
+I replaced the active GoReleaser metadata with `go-go-objects`, patched the disabled docs-publish workflow placeholders so `rg XXX` is clean for release files, and reran the single-target snapshot release. The release now builds the real `./cmd/go-go-objects` binary and produces archive, deb, and rpm artifacts.
+
+### Prompt Context
+
+**User prompt (verbatim):** "┃  release ❯ 
+
+GOWORK=off goreleaser release --skip=sign --snapshot --clean --single-target
+  • by using this software you agree with its EULA, available at https://goreleaser.com/eula
+  • running goreleaser v2.13.3 (outdated, latest is v2.16.0)
+  • skipping license check on snapshot
+  • skipping announce, publish, sign, and validate...
+  • cleaning distribution directory
+  • loading environment variables
+  • getting and validating git state
+    • ignoring errors because this is a snapshot     error=git doesn't contain any tags - either add a tag, use --snapshot, or use --nightly
+    • git state                                      commit=43df9d80480aac244f9afe01c678f0437517c042 branch=task/goja-durable-objects current_tag= previous_tag=<unknown> dirty=false
+    • pipe skipped or partially skipped              reason=validation is disabled
+  • parsing tag
+  • setting defaults
+    • DEPRECATED: snapshot.name_template should not be used anymore, check https://goreleaser.com/deprecations#snapshotname_template for more info
+    • brews is being phased out in favor of homebrew_casks, check https://goreleaser.com/deprecations#brews for more info
+  • partial
+    • adjusting environment                          by=target target=linux_amd64 dist=dist/linux_amd64
+  • snapshotting
+    • building snapshot...                           version=0.0.1-next
+  • running before hooks
+    • running hook                                   hook=go mod tidy
+    • running hook                                   hook=go generate ./...
+  • ensuring distribution directory
+  • setting up metadata
+  • writing release metadata
+  • loading go mod information
+  • build prerequisites
+  • building binaries
+    • partial build                                  filter=target=linux_amd64_v1 matches=linux_amd64_v1
+    • partial build                                  filter=target=linux_amd64_v1 matches=
+    • building                                       binary=dist/linux_amd64/XXX-linux_linux_amd64_v1/XXX
+  ⨯ release failed after 1s                          error=build failed: couldn't find main file: stat cmd/XXX: no such file or directory target=linux_amd64_v1
+make: *** [Makefile:44: goreleaser] Error 1
+
+Fix XXX in Makefile and goreleaser"
+
+**Assistant interpretation:** Replace leftover generated scaffold placeholders that break GoReleaser snapshot builds.
+
+**Inferred user intent:** Make the release target functional before pushing or cutting releases.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Replaced `.goreleaser.yaml` `project_name`, build IDs, `main`, `binary`, brew metadata, and nfpm description with `go-go-objects` values.
+- Replaced disabled docs-publish placeholders in `.github/workflows/release.yaml` with `go-go-objects` values.
+- Ran `GORELEASER_TARGET=--single-target make goreleaser` successfully.
+- Kept the `go.sum` tidy change that removes stale `go-go-goja v0.9.1` checksums.
+
+### Why
+- GoReleaser was still trying to build `./cmd/XXX`, so the release target could never succeed.
+
+### What worked
+- `GORELEASER_TARGET=--single-target make goreleaser` now succeeds and builds `dist/linux_amd64/go-go-objects-linux_linux_amd64_v1/go-go-objects`.
+
+### What didn't work
+- The release still prints deprecation warnings for `snapshot.name_template` and `brews`; these are warnings, not the current failure.
+
+### What I learned
+- The Makefile target was fine; the broken command path came from `.goreleaser.yaml`.
+
+### What was tricky to build
+- GoReleaser's `before` hooks run `go mod tidy`, which removed stale v0.9.1 checksums from `go.sum`. That change is expected after the dependency was bumped to v0.9.5.
+
+### What warrants a second pair of eyes
+- Whether to modernize GoReleaser deprecations now (`snapshot.name_template`, `brews`) or leave them for a release-infra cleanup ticket.
+
+### What should be done in the future
+- Consider enabling/fixing the docs-publish job only if `go-go-objects` supports `help export`; it remains disabled with `if: false`.
+
+### Code review instructions
+- Start with `.goreleaser.yaml` and verify all build `main` fields point to `./cmd/go-go-objects`.
+- Validate with `GORELEASER_TARGET=--single-target make goreleaser`.
+
+### Technical details
+- Original failure: `stat cmd/XXX: no such file or directory`.
+- Successful artifact examples: `go-go-objects_0.0.1-next_linux_amd64.tar.gz`, `.deb`, `.rpm`.
