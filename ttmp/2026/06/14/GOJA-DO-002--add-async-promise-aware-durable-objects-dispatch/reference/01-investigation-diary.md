@@ -680,3 +680,69 @@ Fix XXX in Makefile and goreleaser"
 ### Technical details
 - Original failure: `stat cmd/XXX: no such file or directory`.
 - Successful artifact examples: `go-go-objects_0.0.1-next_linux_amd64.tar.gz`, `.deb`, `.rpm`.
+
+## Step 11: Add Glazed command root and embedded help entries
+
+This step upgraded the standalone `go-go-objects` binary from a plain `flag`-based program to a Glazed/Cobra root command. The existing invocation shape remains the same (`go-go-objects --addr ...`), but the command now uses Glazed flag decoding, root logging flags, and the standard embedded help system used by the other goja/xgoja tools.
+
+I also added first-class help pages for the application overview, JavaScript Durable Objects API, and xgoja provider integration. The docs are available through `go-go-objects help ...` and can be exported to SQLite with `go-go-objects help export`, which means the disabled release workflow docs-publish template now has a real export command if it is enabled later.
+
+### Prompt Context
+
+**User prompt (verbatim):** "do we have proper glazed help entries about the js api and all that? Like in the other goja-XX packages"
+
+**Assistant interpretation:** Add the same kind of embedded Glazed help documentation and CLI help wiring used by nearby goja/xgoja tools, especially for the JS-facing Durable Objects API.
+
+**Inferred user intent:** Make go-go-objects discoverable as a polished Go Go Golems CLI, not just a working binary with README docs.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Loaded the Glazed command/help authoring guidance.
+- Added `cmd/go-go-objects/doc/doc.go` with embedded Markdown help loading.
+- Added help entries:
+  - `go-go-objects-overview`
+  - `go-go-objects-js-api`
+  - `go-go-objects-xgoja-provider`
+- Refactored `cmd/go-go-objects/main.go` into a Glazed `cmds.BareCommand` root while preserving existing flags.
+- Added root logging flags through `logging.AddLoggingSectionToRootCommand`.
+- Wired `help_cmd.SetupCobraRootCommand`.
+- Added tests for root/help wiring and duration parsing.
+
+### Why
+- The project now exposes a JS API and xgoja provider surface large enough to need local CLI help, not just README prose.
+- Glazed help export is also useful for docs registry/release workflows.
+
+### What worked
+- `go-go-objects help go-go-objects-js-api` renders the JavaScript API page.
+- `go-go-objects help` lists the new overview, JS API, and xgoja provider topics.
+- `go-go-objects help export --format sqlite --output-path /tmp/go-go-objects-help/help.sqlite` creates a non-empty SQLite help database.
+- `GOWORK=off go test ./... -count=1` passed.
+- `GOWORK=off golangci-lint run --timeout=5m` passed.
+- `GORELEASER_TARGET=--single-target make goreleaser` passed.
+
+### What didn't work
+- `go-go-objects help topics` is not a valid subcommand in this help implementation; `go-go-objects help` is the topic listing entry point.
+
+### What I learned
+- The standalone CLI can be upgraded to Glazed without changing the primary command shape by making the root itself the Glazed command.
+- `cobra` becomes a direct dependency once the root command is explicitly assembled in this repository.
+
+### What was tricky to build
+- The root has to combine Glazed command parsing, logging initialization, and help-system setup without adding duplicate flags or changing existing user-facing flag names.
+
+### What warrants a second pair of eyes
+- Whether the docs-publish workflow should be enabled now that `help export` works, or remain disabled until release infrastructure roles are confirmed.
+- Whether duration flags should remain strings for Glazed compatibility or be wrapped in a custom duration field later.
+
+### What should be done in the future
+- Add more Example/Tutorial pages once there are more end-to-end examples beyond the counter.
+
+### Code review instructions
+- Review `cmd/go-go-objects/main.go` first for root command wiring and preserved server behavior.
+- Review `cmd/go-go-objects/doc/*.md` for JS API accuracy.
+- Validate with `GOWORK=off go run ./cmd/go-go-objects help go-go-objects-js-api` and `help export`.
+
+### Technical details
+- The root command implements `cmds.BareCommand` because the primary behavior is starting an HTTP server, not emitting rows.
+- The new direct dependency movement in `go.mod` is `github.com/spf13/cobra` moving from indirect to direct.

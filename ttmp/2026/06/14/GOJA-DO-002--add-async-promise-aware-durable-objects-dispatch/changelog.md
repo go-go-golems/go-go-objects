@@ -106,3 +106,14 @@ Fixed release scaffolding placeholders by replacing XXX with go-go-objects in Go
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/.goreleaser.yaml — GoReleaser project/build/package metadata
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.sum — go mod tidy removed stale go-go-goja v0.9.1 checksums
 
+
+## 2026-06-14
+
+Added proper Glazed CLI wiring and embedded help entries for go-go-objects overview, JavaScript API, and xgoja provider usage; help export and snapshot release now work with the Glazed root
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/doc/02-javascript-api.md — Durable Objects JavaScript API help page
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/doc/03-xgoja-provider.md — xgoja provider help page
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main.go — Glazed root command
+

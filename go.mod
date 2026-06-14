@@ -9,6 +9,7 @@ require (
 	github.com/go-go-golems/go-go-goja v0.9.5
 	github.com/go-go-golems/logcopter v0.1.1
 	github.com/mattn/go-sqlite3 v1.14.42
+	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -107,7 +108,6 @@ require (
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sahilm/fuzzy v0.1.1 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tiendc/go-deepcopy v1.7.1 // indirect
 	github.com/tj/go-naturaldate v1.3.0 // indirect
