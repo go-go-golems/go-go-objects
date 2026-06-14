@@ -24,3 +24,15 @@ Implemented Promise-aware actor dispatch: added async RPC/fetch/alarm/timeout/tr
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/actor.go — Promise-aware dispatch implementation
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Async dispatch regression tests
 
+
+## 2026-06-14
+
+Updated public documentation and examples for Promise-aware dispatch: README, release notes, xgoja TypeScript descriptions, and the counter example now describe async RPC/fetch/alarm support and non-goals
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/README.md — Async dispatch user documentation
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/docs/release-notes.md — Async support release notes and validation target
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/counter/objects.js — Async counter example
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects.go — TypeScript/config description updates
+

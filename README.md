@@ -13,8 +13,8 @@ The runtime is intentionally small: each object identity maps to one live JavaSc
 - Lazy actor startup through `Manager.Dispatch`
 - One owned `goja` runtime per live actor
 - Synchronous `state.storage` API backed by SQLite
-- JSON-only RPC dispatch
-- Plain-object fetch dispatch
+- JSON-only RPC dispatch with returned Promise awaiting
+- Plain-object fetch dispatch with returned Promise awaiting
 - `/rpc/:namespace/:name/:method` and `/fetch/:namespace/:name/*` HTTP gateway
 - Persistent alarms with a central SQLite due-alarm index
 - Explicit alarm scheduler and idle evictor wrappers
@@ -82,14 +82,15 @@ class Counter {
     this.env = env;
   }
 
-  increment(by) {
+  async increment(by) {
+    await Promise.resolve();
     const current = this.state.storage.get("count") || 0;
     const next = current + (by || 1);
     this.state.storage.put("count", next);
     return next;
   }
 
-  fetch(req) {
+  async fetch(req) {
     if (req.path === "/count") {
       return { status: 200, body: String(this.state.storage.get("count") || 0) };
     }
@@ -99,6 +100,10 @@ class Counter {
 
 exports.objects = { Counter };
 ```
+
+RPC methods, `fetch(req)`, and `alarm()` may return either plain values or Promises. The actor waits for returned Promises before returning to the HTTP gateway or xgoja caller. `state.storage` remains synchronous, and `state.storage.transaction(fn)` callbacks must remain synchronous; an async transaction callback is rejected so SQLite transaction lifetime stays bounded.
+
+This is Promise-aware dispatch, not full Cloudflare input/output gate compatibility. While a Promise is pending, the object dispatch remains active and serialized; the runtime does not yet interleave another request into the same object during non-storage awaits.
 
 ## xgoja provider configuration
 
@@ -179,7 +184,7 @@ SQLite files are stored below the configured storage root:
 ```text
 var/durable-objects/
   alarms.sqlite              # central due-alarm index
-  COUNTER/<prefix>/<hash>.sqlite
+  objects/<prefix>/<hash>.sqlite
 ```
 
 Each object database stores user key/value data, object metadata, and the local alarm record. The central alarm index is reconciled from object-local alarm records before due alarms are dispatched, so a missing or stale `alarms.sqlite` row can be repaired after a crash.
@@ -191,7 +196,7 @@ Back up the full storage root as one unit. The current schema is initialized wit
 - Object namespaces and names are validated as safe single path segments before storage paths are derived.
 - Gateway request bodies are capped by `GatewayOptions.MaxRequestBytes` and default to 64 MiB.
 - Production callers should set `DevErrors: false`; detailed errors are intended for local development.
-- JavaScript bundles are trusted code. CPU timeout limits bound per-dispatch execution time, but this is not a sandbox for hostile code.
+- JavaScript bundles are trusted code. CPU timeout limits bound synchronous CPU work and returned Promise settlement time, but this is not a sandbox for hostile code.
 - Storage quotas are not enforced yet; embedders should isolate storage roots and monitor disk usage.
 
 ## Examples
@@ -220,7 +225,7 @@ examples/counter/xgoja-runtime.yaml
 go test ./... -count=1
 ```
 
-For a release candidate, also run focused concurrency tests and `docmgr doctor --ticket GOJA-DO-001 --stale-after 30`. See `docs/release-notes.md` for the full release checklist and known limitations.
+For a release candidate, also run focused concurrency/async tests and `docmgr doctor --ticket GOJA-DO-001 --stale-after 30`. See `docs/release-notes.md` for the full release checklist and known limitations.
 
 The design and implementation diary live in the docmgr ticket:
 

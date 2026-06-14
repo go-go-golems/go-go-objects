@@ -6,7 +6,7 @@ This release candidate provides an MVP Durable Objects runtime for goja/go-go-go
 
 - one live goja runtime per active object identity,
 - SQLite-backed object-local storage,
-- RPC, fetch, and alarm dispatch,
+- RPC, fetch, and alarm dispatch with returned Promise awaiting,
 - HTTP gateway routes under `/rpc` and `/fetch`,
 - CLI demo/custom bundle server,
 - xgoja provider module with filesystem and embedded asset bundle loading,
@@ -15,6 +15,8 @@ This release candidate provides an MVP Durable Objects runtime for goja/go-go-go
 - embeddable HTTP server helper and custom xgoja template example for existing `http.Server` applications,
 - automatic `exports.objects` namespace derivation using `CamelCase` to `CAMEL_CASE` conversion.
 
+Async dispatch support means object RPC methods, `fetch(req)`, and `alarm()` may return Promises. The runtime waits for those Promises before completing the dispatch. It does not yet implement Cloudflare input gates, output gates, async storage APIs, or request interleaving within one object while a Promise is pending.
+
 ## Validation commands
 
 Run before tagging:
@@ -22,7 +24,7 @@ Run before tagging:
 ```bash
 go test ./... -count=1
 go test ./pkg/durableobjects ./pkg/xgoja/providers/durableobjects \
-  -run 'TestConcurrentFirstDispatchStartsOneActor|TestGlazedConfigMapsIntoModuleRPC|TestGeneratedStyleRuntimeLoadsEmbeddedBundleAsset|TestModuleMountsGatewayOnExternalHTTPHost' \
+  -run 'TestConcurrentFirstDispatchStartsOneActor|TestAsyncRPCDispatchAwaitsFulfilledPromise|TestAsyncFetchDispatchAwaitsFulfilledPromise|TestAsyncRPCDispatchPendingPromiseTimesOut|TestGlazedConfigMapsIntoModuleRPC|TestGeneratedStyleRuntimeLoadsEmbeddedBundleAsset|TestModuleMountsGatewayOnExternalHTTPHost' \
   -race -count=1
 docmgr doctor --ticket GOJA-DO-001 --stale-after 30
 git status --short
@@ -37,6 +39,7 @@ git status --short
 - Automatic HTTP mounting is supported when the Durable Objects provider can see a shared xgoja HTTP host service; embedders can still mount `GatewayService.Handler` manually.
 - The generated `durableobjects serve` command is provider-owned; generated binaries must include a v2 `commands[].type: provider.command-set` entry for provider `durableobjects` and command set `serve`.
 - The recommended xgoja/v2 HTTP composition path uses the HTTP provider's `serve` command and a jsverb that mounts `durableobjects.gateway()` into Express.
+- `cpuTimeout` currently acts as the total dispatch budget for both synchronous CPU work and returned Promise settlement.
 
 ## Tagging guidance
 

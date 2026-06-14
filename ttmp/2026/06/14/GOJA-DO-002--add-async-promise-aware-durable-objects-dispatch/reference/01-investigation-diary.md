@@ -10,16 +10,23 @@ DocType: reference
 Intent: long-term
 Owners: []
 RelatedFiles:
+    - Path: README.md
+      Note: Step 3 async dispatch docs
+    - Path: examples/counter/objects.js
+      Note: Step 3 async example
     - Path: pkg/durableobjects/actor.go
       Note: Step 2 Promise-aware dispatch implementation
     - Path: pkg/durableobjects/durableobjects_test.go
       Note: Step 2 async dispatch tests
+    - Path: pkg/xgoja/providers/durableobjects/durableobjects.go
+      Note: Step 3 TypeScript/config docs
 ExternalSources: []
 Summary: Chronological diary for adding Promise-aware async Durable Objects dispatch.
 LastUpdated: 2026-06-14T18:00:00Z
 WhatFor: Use this to understand how GOJA-DO-002 was researched and implemented.
 WhenToUse: Read before resuming or reviewing async dispatch work.
 ---
+
 
 
 # Diary
@@ -164,3 +171,55 @@ The implementation keeps the conservative runtime model from the design guide: o
   `GOWORK=off go test ./pkg/durableobjects -run 'TestAsync|TestAlarmDispatchWakesEvictedActor|TestDispatchDueAlarmsReconcilesMissingIndex|TestAlarmSchedulerTick' -count=1`
 - Passing command after implementation:
   `GOWORK=off go test ./... -count=1`
+
+## Step 3: Document async dispatch and update the counter example
+
+This step updated the user-facing materials after the actor implementation passed tests. The README now states that RPC methods, `fetch(req)`, and `alarm()` may return Promises, and it also states what this does not mean: the runtime still does not implement Cloudflare input gates, output gates, async storage APIs, or same-object request interleaving during awaits.
+
+The counter example now uses `async increment` and `async fetch`, so the CLI and generated-binary examples exercise the new dispatch behavior. The xgoja TypeScript declaration comments were updated to explain that the `durableobjects` module blocks until returned object-handler Promises settle, even though the xgoja module function itself remains synchronous from the caller's perspective.
+
+### Prompt Context
+
+**User prompt (verbatim):** (same as Step 2)
+
+**Assistant interpretation:** Continue the implementation in documented, reviewable slices after the actor behavior change.
+
+**Inferred user intent:** Keep code, examples, docs, and ticket bookkeeping consistent as the implementation evolves.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Updated `README.md` with Promise-aware dispatch semantics and non-goals.
+- Updated `docs/release-notes.md` with async support, validation target changes, and timeout wording.
+- Updated `examples/counter/objects.js` so the counter uses async `increment` and async `fetch`.
+- Updated xgoja provider config/TypeScript descriptions around CPU/Promise settlement timeout and RPC/fetch completion.
+- Ran `GOWORK=off go test ./... -count=1`.
+
+### Why
+- The behavior change would be surprising if examples still implied sync-only object methods.
+- Users need to know that Promise-aware dispatch is not full Cloudflare gate compatibility.
+
+### What worked
+- Full test suite passed after the async counter example update.
+
+### What didn't work
+- N/A for this step.
+
+### What I learned
+- The xgoja module API remains synchronous because Go dispatch waits internally; the asynchronous part is the object handler implementation, not the host module call shape.
+
+### What was tricky to build
+- The wording needed to distinguish three layers: JavaScript object handlers may be async; the Go/xgoja caller blocks until they settle; Cloudflare-style interleaving is still out of scope.
+
+### What warrants a second pair of eyes
+- Whether the `cpuTimeout` description should be renamed in a future breaking release to `dispatchTimeout`.
+
+### What should be done in the future
+- Run generated-binary smoke tests because the counter example changed.
+
+### Code review instructions
+- Review `README.md` and `examples/counter/objects.js` together.
+- Validate with `GOWORK=off go test ./... -count=1`.
+
+### Technical details
+- Validation command: `GOWORK=off go test ./... -count=1`.
