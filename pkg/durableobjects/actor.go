@@ -12,15 +12,16 @@ import (
 )
 
 type Actor struct {
-	id         ObjectID
-	className  string
-	runtime    *engine.Runtime
-	instance   *goja.Object // owner-thread only; access through runtime.Owner.Call.
-	storage    Storage
-	manager    *Manager
-	cpuTimeout time.Duration
-	lastUsedNS atomic.Int64
-	active     atomic.Int32
+	id           ObjectID
+	className    string
+	runtime      *engine.Runtime
+	instance     *goja.Object // owner-thread only; access through runtime.Owner.Call.
+	storage      Storage
+	manager      *Manager
+	cpuTimeout   time.Duration
+	dispatchGate chan struct{}
+	lastUsedNS   atomic.Int64
+	active       atomic.Int32
 }
 
 type dispatchValueKind int
@@ -51,6 +52,11 @@ func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 		a.touch()
 		a.active.Add(-1)
 	}()
+	release, err := a.acquireDispatch(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
 	return a.withInterrupt(ctx, func(ctx context.Context) (Result, error) {
 		raw, err := a.invokeDispatch(ctx, env)
 		if err != nil {
@@ -62,6 +68,21 @@ func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 		}
 		return a.convertDispatchValue(ctx, settled)
 	})
+}
+
+func (a *Actor) acquireDispatch(ctx context.Context) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a == nil || a.dispatchGate == nil {
+		return func() {}, nil
+	}
+	select {
+	case a.dispatchGate <- struct{}{}:
+		return func() { <-a.dispatchGate }, nil
+	case <-ctx.Done():
+		return nil, timeoutOrContextError(ctx)
+	}
 }
 
 func (a *Actor) Close(ctx context.Context) error {

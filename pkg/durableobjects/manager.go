@@ -289,7 +289,7 @@ func (m *Manager) startActor(ctx context.Context, id ObjectID) (*Actor, error) {
 		_ = storage.Close()
 		return nil, wrap(CodeActorStartFailed, "create actor runtime", err)
 	}
-	actor := &Actor{id: id, className: className, runtime: rt, storage: storage, manager: m, cpuTimeout: m.opts.CPUTimeout}
+	actor := &Actor{id: id, className: className, runtime: rt, storage: storage, manager: m, cpuTimeout: m.opts.CPUTimeout, dispatchGate: make(chan struct{}, 1)}
 	actor.touch()
 	_ = rt.AddCloser(func(context.Context) error { return storage.Close() })
 	if err := actor.bootstrap(ctx, m.bundle); err != nil {

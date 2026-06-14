@@ -84,3 +84,14 @@ Bumped go-go-goja dependency to v0.9.5, which contains the finalized xgoja v2 Ru
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.mod — go-go-goja v0.9.5 dependency bump
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.sum — Checksums for go-go-goja v0.9.5 transitive dependencies
 
+
+## 2026-06-14
+
+Fixed async dispatch serialization review finding by adding a context-aware per-actor dispatch gate around invoke, Promise settlement, and result conversion
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/actor.go — Per-actor async dispatch gate
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Regression for concurrent async lost updates
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/manager.go — Initializes actor dispatch gate
+

@@ -520,3 +520,76 @@ After bumping to `v0.9.5`, standalone `GOWORK=off` tests pass. The only extra mo
 ### Technical details
 - Working dependency: `github.com/go-go-golems/go-go-goja v0.9.5`.
 - Validation command: `GOWORK=off go test ./... -count=1`.
+
+## Step 9: Serialize pending async dispatches per actor
+
+This step addressed a PR review finding about async handler interleaving. The reviewer was correct: `RuntimeOwner.Call` serializes individual owner-thread callbacks, but after `invokeDispatch` returned a pending `goja.Promise`, the Go-side polling loop waited outside that callback. Another request to the same actor could enter `invokeDispatch` while the first Promise was still pending.
+
+I added a context-aware per-actor dispatch gate that covers the full dispatch lifecycle: JavaScript method invocation, Promise settlement polling, and result conversion. The gate is acquired before the dispatch timeout/interrupt timer is started, so queued requests do not start their CPU/Promise budget while waiting behind an already-active dispatch.
+
+### Prompt Context
+
+**User prompt (verbatim):** "pkg/durableobjects/actor.go
+            select {
+            case <-ctx.Done():
+                return nil, timeoutOrContextError(ctx)
+            case <-time.After(5 * time.Millisecond):
+@chatgpt-codex-connector
+chatgpt-codex-connector Bot
+1 minute ago
+
+P1 Badge Serialize async dispatches per actor
+
+When a handler returns a pending Promise, this branch waits in Go after the initial Owner.Call has returned. Because Actor.Dispatch has no per-actor mutex covering invokeDispatch through Promise settlement and result conversion, a concurrent request to the same object can enter invokeDispatch during this sleep and mutate the same instance before the first async handler settles; the first dispatch's timeout timer can also interrupt the VM while that later dispatch is running. This breaks the single-object serialization expected for async handlers and can corrupt state under concurrent requests to one object.
+
+Useful? React with 👍 / 👎."
+
+**Assistant interpretation:** Investigate the review finding against go-go-goja owner semantics and fix the Durable Objects actor dispatch if the concern is valid.
+
+**Inferred user intent:** Ensure the async implementation preserves single-object serialization and is safe under concurrent requests.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Inspected go-go-goja `runtimeowner.Call` and confirmed it serializes one owner callback at a time, not a whole higher-level Durable Objects dispatch after a pending Promise escapes the first callback.
+- Added `Actor.dispatchGate chan struct{}`.
+- Initialized the gate in `Manager.startActor`.
+- Acquired the gate in `Actor.Dispatch` before starting `withInterrupt`.
+- Added `TestAsyncRPCDispatchSerializesPendingPromisesPerActor`, which concurrently calls an async read-then-write method that would lose updates if dispatches interleaved.
+- Ran focused tests, full tests, lint, gosec, and govulncheck.
+
+### Why
+- Durable Object actor semantics require one active event/dispatch per object for this implementation milestone.
+- The timeout interrupt belongs to the active dispatch only; without a full-dispatch gate, one request's timer could interrupt a later request running on the same VM.
+
+### What worked
+- The regression test passes with the gate and would expose lost updates without serialization.
+- `GOWORK=off go test ./... -count=1` passed.
+- `GOWORK=off golangci-lint run --timeout=5m` passed.
+- `gosec` passed with 0 issues.
+- `govulncheck` reported no reachable vulnerabilities.
+
+### What didn't work
+- The original implementation incorrectly assumed owner-thread serialization was enough for async Promise-returning handlers.
+
+### What I learned
+- go-go-goja ownership and Durable Object actor serialization are different layers. `RuntimeOwner.Call` protects individual VM access callbacks; the Durable Objects runtime must protect its actor-level event lifecycle when that lifecycle spans multiple owner callbacks.
+
+### What was tricky to build
+- The gate needs to be acquired before `withInterrupt`, otherwise a queued request could start its dispatch timeout while merely waiting for the previous dispatch. A channel gate rather than a plain `sync.Mutex` also allows cancellation while waiting for a busy actor.
+
+### What warrants a second pair of eyes
+- Whether queued dispatches should have a separate queue-wait timeout in addition to the per-dispatch CPU/Promise settlement timeout.
+- Whether future Cloudflare-style input gates should replace this simple full-dispatch gate when interleaving is intentionally introduced.
+
+### What should be done in the future
+- If input/output gates are implemented later, explicitly model which awaits may release the dispatch gate and which storage operations must keep it closed.
+
+### Code review instructions
+- Review `Actor.Dispatch`, `Actor.acquireDispatch`, and `Manager.startActor`.
+- Review `TestAsyncRPCDispatchSerializesPendingPromisesPerActor` for the lost-update scenario.
+- Validate with `GOWORK=off go test ./... -count=1`.
+
+### Technical details
+- go-go-goja evidence: `runtimeowner.Call` posts a callback and returns when that callback returns; it does not know that a returned `goja.Promise` is part of a larger actor event.
+- The dispatch gate spans `invokeDispatch`, `awaitDispatchValue`, and `convertDispatchValue`.

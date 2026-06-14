@@ -27,6 +27,13 @@ class Counter {
     await Promise.resolve();
     return this.increment(by);
   }
+  async asyncReadThenIncrement() {
+    const current = this.state.storage.get("count") || 0;
+    await Promise.resolve();
+    const next = current + 1;
+    this.state.storage.put("count", next);
+    return next;
+  }
   async rejectAsync() {
     await Promise.resolve();
     throw new Error("async boom");
@@ -250,6 +257,42 @@ func TestAsyncRPCDispatchAwaitsFulfilledPromise(t *testing.T) {
 	}
 	if got := rpcNumber(t, mgr, id, "value", nil); got != 7 {
 		t.Fatalf("value after asyncIncrement = %v, want 7", got)
+	}
+}
+
+func TestAsyncRPCDispatchSerializesPendingPromisesPerActor(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-serialized")
+	if err != nil {
+		t.Fatalf("NewObjectID() error = %v", err)
+	}
+	const calls = 16
+	var wg sync.WaitGroup
+	errCh := make(chan error, calls)
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			payload, err := json.Marshal([]any{})
+			if err != nil {
+				errCh <- err
+				return
+			}
+			_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "asyncReadThenIncrement", ArgsJSON: payload})
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("Dispatch() error = %v", err)
+		}
+	}
+	if got := rpcNumber(t, mgr, id, "value", nil); got != calls {
+		t.Fatalf("value after concurrent async dispatches = %v, want %d", got, calls)
 	}
 }
 
