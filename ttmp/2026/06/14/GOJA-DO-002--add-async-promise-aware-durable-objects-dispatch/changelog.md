@@ -55,3 +55,22 @@ Uploaded GOJA-DO-002 bundle to reMarkable and fixed Mermaid sequence diagram act
 
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/14/GOJA-DO-002--add-async-promise-aware-durable-objects-dispatch/design-doc/01-async-durable-objects-dispatch-design-guide.md — Mermaid diagram alias cleanup for reMarkable rendering
 
+
+## 2026-06-14
+
+Adapted durableobjects xgoja integration tests and embeddable template from removed RuntimeSpec types to the finalized xgoja v2 RuntimePlan/SourcePlan API
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/examples/templates/durableobjects_http_runtime.go.tmpl — RuntimePlan-based generated template
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/xgoja/providers/durableobjects/durableobjects_test.go — RuntimePlan-based provider test fixtures
+
+
+## 2026-06-14
+
+Confirmed go-go-goja v2 host-services docs/example commit 63415b9 is local-only for module resolution; deferred go-go-goja go.mod bump until the commit is pushed or tagged
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.mod — Dependency remains on published go-go-goja until v2 cutover commit is reachable
+

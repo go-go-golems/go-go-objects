@@ -31,12 +31,12 @@ type Runtime struct {
 	Runtime interface{ Close(context.Context) error }
 }
 
-func DecodeSpec() (*app.RuntimeSpec, error) {
-	runtimeSpec := &app.RuntimeSpec{}
-	if err := json.Unmarshal([]byte(EmbeddedSpecJSON), runtimeSpec); err != nil {
+func DecodeSpec() (*app.RuntimePlan, error) {
+	runtimePlan := &app.RuntimePlan{}
+	if err := json.Unmarshal([]byte(EmbeddedSpecJSON), runtimePlan); err != nil {
 		return nil, err
 	}
-	return runtimeSpec, nil
+	return runtimePlan, nil
 }
 
 func RegisterProviders(registry *providerapi.ProviderRegistry) error {
@@ -57,12 +57,12 @@ func NewRuntime(ctx context.Context) (*Runtime, error) {
 	if err := RegisterProviders(registry); err != nil {
 		return nil, err
 	}
-	runtimeSpec, err := DecodeSpec()
+	runtimePlan, err := DecodeSpec()
 	if err != nil {
 		return nil, err
 	}
 	jsHost := gojahttp.NewHost(gojahttp.HostOptions{})
-	host := app.NewHostWithOptions(registry, runtimeSpec, app.HostOptions{
+	host := app.NewHostWithOptions(registry, runtimePlan, app.HostOptions{
 {{- if .HasEmbeddedAssets }}
 		EmbeddedAssets: embeddedAssets,
 {{- end }}

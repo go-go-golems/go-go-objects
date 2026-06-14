@@ -91,7 +91,7 @@ func TestGlazedConfigMapsIntoModuleRPC(t *testing.T) {
 		"alarm-interval": "0",
 		"idle-interval":  "0",
 	})
-	factory := app.NewRuntimeFactory(registry, &app.RuntimeSpec{Modules: []app.ModuleInstanceSpec{{Package: PackageID, Name: "durableobjects"}}})
+	factory := app.NewRuntimeFactory(registry, &app.RuntimePlan{Runtime: app.RuntimeSection{Modules: []app.RuntimeModulePlan{{Provider: PackageID, Name: "durableobjects"}}}})
 	rt, err := factory.NewRuntimeFromSections(ctx, vals)
 	if err != nil {
 		t.Fatalf("NewRuntimeFromSections() error = %v", err)
@@ -115,10 +115,10 @@ func TestGeneratedStyleRuntimeLoadsEmbeddedBundleAssetRootPath(t *testing.T) {
 	if err := Register(registry); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	runtimeSpec := &app.RuntimeSpec{
-		Modules: []app.ModuleInstanceSpec{{
-			Package: PackageID,
-			Name:    "durableobjects",
+	runtimePlan := &app.RuntimePlan{
+		Runtime: app.RuntimeSection{Modules: []app.RuntimeModulePlan{{
+			Provider: PackageID,
+			Name:     "durableobjects",
 			Config: map[string]any{
 				"storageRoot":     t.TempDir(),
 				"bundleAsset":     "counter-bundle",
@@ -126,13 +126,13 @@ func TestGeneratedStyleRuntimeLoadsEmbeddedBundleAssetRootPath(t *testing.T) {
 				"alarmInterval":   "0",
 				"idleInterval":    "0",
 			},
-		}},
-		Assets: []app.AssetSourceSpec{{ID: "counter-bundle", Path: "assets", Embed: true}},
+		}}},
+		Sources: []app.SourcePlan{{ID: "counter-bundle", Kind: app.SourceKindAssets, Path: "assets", Embed: true}},
 	}
 	services := app.HostServices{Assets: app.NewAssetStore(fstest.MapFS{
 		"assets/objects.js": &fstest.MapFile{Data: []byte(testBundle)},
-	}, runtimeSpec)}
-	factory := app.NewRuntimeFactory(registry, runtimeSpec, services)
+	}, runtimePlan)}
+	factory := app.NewRuntimeFactory(registry, runtimePlan, services)
 	rt, err := factory.NewRuntime(ctx)
 	if err != nil {
 		t.Fatalf("NewRuntime() error = %v", err)
@@ -155,23 +155,23 @@ func TestGeneratedStyleRuntimeLoadsEmbeddedBundleAsset(t *testing.T) {
 	if err := Register(registry); err != nil {
 		t.Fatalf("Register() error = %v", err)
 	}
-	runtimeSpec := &app.RuntimeSpec{
-		Modules: []app.ModuleInstanceSpec{{
-			Package: PackageID,
-			Name:    "durableobjects",
+	runtimePlan := &app.RuntimePlan{
+		Runtime: app.RuntimeSection{Modules: []app.RuntimeModulePlan{{
+			Provider: PackageID,
+			Name:     "durableobjects",
 			Config: map[string]any{
 				"storageRoot":   t.TempDir(),
 				"bundleAsset":   "durableobjects/objects.js",
 				"alarmInterval": "0",
 				"idleInterval":  "0",
 			},
-		}},
-		Assets: []app.AssetSourceSpec{{ID: "durableobjects/objects.js", Path: "assets/objects.js", Embed: true}},
+		}}},
+		Sources: []app.SourcePlan{{ID: "durableobjects/objects.js", Kind: app.SourceKindAssets, Path: "assets/objects.js", Embed: true}},
 	}
 	services := app.HostServices{Assets: app.NewAssetStore(fstest.MapFS{
 		"assets/objects.js": &fstest.MapFile{Data: []byte(testBundle)},
-	}, runtimeSpec)}
-	factory := app.NewRuntimeFactory(registry, runtimeSpec, services)
+	}, runtimePlan)}
+	factory := app.NewRuntimeFactory(registry, runtimePlan, services)
 	rt, err := factory.NewRuntime(ctx)
 	if err != nil {
 		t.Fatalf("NewRuntime() error = %v", err)

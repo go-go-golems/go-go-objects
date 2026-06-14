@@ -344,3 +344,128 @@ I renamed the sequence participant alias to `DOActor`, updated the corresponding
 
 ### Technical details
 - Upload command used `remarquee upload bundle ... --force --non-interactive`.
+
+## Step 6: Adapt to finalized xgoja v2 RuntimePlan API
+
+This step fixed the post-merge xgoja v2 cutover fallout. The immediate failure was in `go-go-goja/pkg/xgoja/app/command_providers_test.go`, where a merge left one command-provider test body outside a function and also kept one host-services test on the removed `RuntimeSpec` API.
+
+After repairing go-go-goja, `go-go-objects` still had test/template references to removed xgoja v1 runtime-spec types. I updated the Durable Objects provider tests and custom embeddable template to use `app.RuntimePlan`, `app.RuntimeSection`, `app.RuntimeModulePlan`, and asset `app.SourcePlan` entries.
+
+### Prompt Context
+
+**User prompt (verbatim):** "I bumped go-go-goja with a fully written out xgoja v2 runtimeplan and all that. After the merge, one test fails: 
+A new release of dagger is available: v0.20.3 → v0.21.6
+To upgrade, see https://docs.dagger.io/install
+https://github.com/dagger/dagger/releases/tag/v0.21.6
+2026/06/14 16:53:05 exported split assets to /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-goja/cmd/bun-demo/assets-split (dagger)
+go test ./...
+# github.com/go-go-golems/go-go-goja/pkg/xgoja/app
+pkg/xgoja/app/command_providers_test.go:72:2: expected declaration, found registry
+FAIL    github.com/go-go-golems/go-go-goja/pkg/xgoja/app [setup failed]
+
+Can you investigate and figure out how to update go-go-goja and go-go-objects to work with the now finished xgoja v2 cutover"
+
+**Assistant interpretation:** Repair the xgoja v2 merge breakage, then update the Durable Objects provider integration to the finalized runtime-plan API.
+
+**Inferred user intent:** Keep the Durable Objects branch compatible with the completed xgoja v2 cutover before merging or pushing follow-up work.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Fixed the malformed go-go-goja command provider test by restoring the missing `func TestHostAttachProviderCommandsPassesSelectedModules` declaration.
+- Updated the go-go-goja host-services command-provider test from removed `RuntimeSpec`/`CommandProviderInstanceSpec` to `RuntimePlan`/`CommandPlan`.
+- Removed the untracked `.orig` merge artifact in go-go-goja.
+- Updated go-go-objects Durable Objects provider tests from `RuntimeSpec`, `ModuleInstanceSpec`, and `AssetSourceSpec` to `RuntimePlan`, `RuntimeModulePlan`, and `SourcePlan`.
+- Updated `examples/templates/durableobjects_http_runtime.go.tmpl` to decode `*app.RuntimePlan`.
+- Built and smoked the generated xgoja v2 counter binary.
+
+### Why
+- The finalized xgoja v2 runtime no longer exposes the legacy runtime-spec types.
+- Durable Objects generated templates and tests should exercise the same runtime-plan representation that xgoja now embeds.
+
+### What worked
+- `go-go-goja`: `go test ./... -count=1` passed.
+- `go-go-objects`: workspace `go test ./... -count=1` passed before this diary update.
+- Generated binary build passed with the updated xgoja v2 runtime plan.
+- HTTP composition smoke passed: `/healthz`, `/rpc/COUNTER/generated/increment`, `/fetch/COUNTER/generated/count`.
+- Direct `durableobjects serve` smoke passed when public Durable Objects overrides were enabled with `--durableobjects-enabled`.
+
+### What didn't work
+- `GOWORK=off go test ./pkg/xgoja/providers/durableobjects -count=1` still fails until `go-go-objects/go.mod` points at a published go-go-goja version/commit that contains the v2 `RuntimePlan` API.
+- Direct serve storage override was ignored when only `--durableobjects-storage-root` was supplied because the public Durable Objects section merge currently requires `--durableobjects-enabled`.
+
+### What I learned
+- The v2 cutover changed both generated runtime metadata and asset source declarations: embedded asset fixtures now belong in `RuntimePlan.Sources` with `Kind: SourceKindAssets`.
+- The command-provider host service regression test survived the merge semantically, but needed to be expressed as a v2 `CommandPlan`.
+
+### What was tricky to build
+- The go-go-goja test file had staged v2 changes plus an unstaged merge repair, so it was important to stage only the corrected test file without disturbing the larger staged cutover.
+- go-go-objects can be validated in the workspace against local go-go-goja, but standalone validation requires a dependency version that does not exist in the current `go.mod` yet.
+
+### What warrants a second pair of eyes
+- Decide whether to change direct serve CLI overrides so fields like `--durableobjects-storage-root` merge without also requiring `--durableobjects-enabled`.
+- Decide the exact go-go-goja version/commit to put in `go-go-objects/go.mod` after the v2 cutover is committed and pushed.
+
+### What should be done in the future
+- After the go-go-goja v2 cutover commit is available remotely, run `go get github.com/go-go-golems/go-go-goja@<commit-or-tag>` in go-go-objects and re-run `GOWORK=off go test ./... -count=1`.
+
+### Code review instructions
+- In go-go-goja, start with `pkg/xgoja/app/command_providers_test.go` around the two command-provider tests.
+- In go-go-objects, review `pkg/xgoja/providers/durableobjects/durableobjects_test.go` and `examples/templates/durableobjects_http_runtime.go.tmpl`.
+- Validate with `go test ./... -count=1` in both repositories under the workspace.
+
+### Technical details
+- Original error: `pkg/xgoja/app/command_providers_test.go:72:2: expected declaration, found registry`.
+- Generated binary: `/tmp/durableobjects-counter-v2`.
+- Direct serve override requires: `--durableobjects-enabled --durableobjects-storage-root /tmp/...`.
+
+## Step 7: Confirm object-side state after xgoja host-services docs commit
+
+After the xgoja side was committed, I checked whether `go-go-objects` could point at the new go-go-goja v2 cutover commit. The code changes on the Durable Objects side are already the right shape for the finalized RuntimePlan API, but `go get` cannot resolve the new commit until it is pushed or otherwise available from the module proxy/origin.
+
+I therefore left `go.mod` unchanged for now and kept the object-side change focused on the RuntimePlan test/template migration plus ticket bookkeeping. This avoids reintroducing a local `replace` that would make the branch non-portable.
+
+### Prompt Context
+
+**User prompt (verbatim):** "i committed them. Anything to update now on the objects side?"
+
+**Assistant interpretation:** Check whether go-go-objects needs follow-up changes now that go-go-goja has the committed xgoja v2 host-service documentation/example updates.
+
+**Inferred user intent:** Finish the cross-repository integration cleanly without leaving object-side compatibility or dependency issues hidden.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Checked go-go-goja head: `63415b9 :art: Update docs and examples about exposing host services to the runtime command providers`.
+- Tried `GOWORK=off go get github.com/go-go-golems/go-go-goja@63415b9` in go-go-objects.
+- Confirmed the commit is not reachable to `go get` yet.
+
+### Why
+- go-go-objects standalone validation requires `go.mod` to reference a go-go-goja version containing `app.RuntimePlan` and `CommandSetContext.Host`.
+- Until that commit is reachable remotely, a go.mod bump is not reproducible.
+
+### What worked
+- Workspace validation still uses the local go-go-goja checkout through `go.work` and can validate the RuntimePlan migration.
+
+### What didn't work
+- `GOWORK=off go get github.com/go-go-golems/go-go-goja@63415b9` failed with:
+  `go: github.com/go-go-golems/go-go-goja@63415b9: invalid version: unknown revision 63415b9`
+
+### What I learned
+- The object-side code can be made source-compatible now, but the module dependency should only be updated after the xgoja cutover commit is pushed or tagged.
+
+### What was tricky to build
+- The correct local development state and the correct portable module state differ temporarily: workspace tests should use the local checkout, but go.mod should not point at an unreachable commit.
+
+### What warrants a second pair of eyes
+- Decide whether `go-go-goja` should be tagged for this cutover or whether `go-go-objects` should depend on the pushed commit hash.
+
+### What should be done in the future
+- Once `63415b9` or a successor is pushed, run `GOWORK=off go get github.com/go-go-golems/go-go-goja@<commit-or-tag>` and then `GOWORK=off go test ./... -count=1`.
+
+### Code review instructions
+- Review `go.mod` remaining unchanged as intentional, not an omission.
+- Review the RuntimePlan migration files in this commit.
+
+### Technical details
+- Failed command: `GOWORK=off go get github.com/go-go-golems/go-go-goja@63415b9`.
