@@ -1,0 +1,389 @@
+package durableobjects
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+)
+
+const sqliteSchemaVersion = 1
+
+type SQLiteStorageFactory struct {
+	Root string
+}
+
+type AlarmRecord struct {
+	ID    ObjectID
+	DueAt time.Time
+}
+
+func NewSQLiteStorageFactory(root string) *SQLiteStorageFactory {
+	return &SQLiteStorageFactory{Root: root}
+}
+
+func (f *SQLiteStorageFactory) Open(ctx context.Context, id ObjectID) (Storage, error) {
+	if f == nil || strings.TrimSpace(f.Root) == "" {
+		return nil, coded(CodeBadRequest, "sqlite storage root is required")
+	}
+	if id.IsZero() {
+		return nil, coded(CodeBadRequest, "object id is required")
+	}
+	path, err := f.pathFor(id)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G703 -- pathFor validates a SHA-256 hex object hash and verifies the final path stays under the configured storage root.
+	// codeql[go/path-injection] path is produced by pathFor, which validates the hash and checks the path remains below the storage root.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, wrap(CodeStorageError, "create object storage directory", err)
+	}
+	// codeql[go/path-injection] path is produced by pathFor, which validates the hash and checks the path remains below the storage root.
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return nil, wrap(CodeStorageError, "open object sqlite database", err)
+	}
+	s := &SQLiteStorage{db: db, path: path, id: id, factory: f}
+	if err := s.init(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (f *SQLiteStorageFactory) pathFor(id ObjectID) (string, error) {
+	if err := validateStorageHash(id.Hash); err != nil {
+		return "", err
+	}
+	root, err := cleanStorageRoot(f.Root)
+	if err != nil {
+		return "", err
+	}
+	prefix := id.Hash[:2]
+	path := filepath.Join(root, "objects", prefix, id.Hash+".sqlite")
+	if err := ensurePathWithinRoot(root, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func cleanStorageRoot(root string) (string, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return "", coded(CodeBadRequest, "sqlite storage root is required")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", wrap(CodeStorageError, "resolve sqlite storage root", err)
+	}
+	return filepath.Clean(abs), nil
+}
+
+func validateStorageHash(hash string) error {
+	if len(hash) != sha256HexLen {
+		return coded(CodeBadRequest, "object hash has invalid length")
+	}
+	for _, r := range hash {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return coded(CodeBadRequest, "object hash contains invalid character")
+	}
+	return nil
+}
+
+func ensurePathWithinRoot(root, path string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return wrap(CodeStorageError, "validate sqlite storage path", err)
+	}
+	if rel == "." || rel == "" || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return coded(CodeBadRequest, "sqlite storage path escapes storage root")
+	}
+	return nil
+}
+
+type SQLiteStorage struct {
+	db      *sql.DB
+	path    string
+	id      ObjectID
+	factory *SQLiteStorageFactory
+}
+
+func (s *SQLiteStorage) init(ctx context.Context) error {
+	if err := ensureSQLiteSchemaVersion(ctx, s.db, "object sqlite database"); err != nil {
+		return err
+	}
+	stmts := []string{
+		`PRAGMA journal_mode=WAL`,
+		`CREATE TABLE IF NOT EXISTS kv (
+			key TEXT PRIMARY KEY,
+			value_json BLOB NOT NULL,
+			updated_at_ms INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS meta (
+			key TEXT PRIMARY KEY,
+			value_json BLOB NOT NULL,
+			updated_at_ms INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS alarms (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			due_at_ms INTEGER NOT NULL,
+			updated_at_ms INTEGER NOT NULL
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return wrap(CodeStorageError, "initialize object sqlite schema", err)
+		}
+	}
+	if err := s.storeObjectMetadata(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) storeObjectMetadata(ctx context.Context) error {
+	meta := map[string]string{"namespace": s.id.Namespace, "name": s.id.Name, "hash": s.id.Hash}
+	for key, value := range meta {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return wrap(CodeStorageError, "encode object metadata", err)
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO meta (key, value_json, updated_at_ms)
+			VALUES (?, ?, ?)
+			ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at_ms = excluded.updated_at_ms`, "object."+key, data, time.Now().UnixMilli()); err != nil {
+			return wrap(CodeStorageError, "store object metadata", err)
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) Get(ctx context.Context, key string) (any, bool, error) {
+	return storageGet(ctx, s.db, key)
+}
+
+func (s *SQLiteStorage) Put(ctx context.Context, key string, value any) error {
+	return storagePut(ctx, s.db, key, value)
+}
+
+func (s *SQLiteStorage) Delete(ctx context.Context, key string) (bool, error) {
+	return storageDelete(ctx, s.db, key)
+}
+
+func (s *SQLiteStorage) List(ctx context.Context, prefix string, limit int) (map[string]any, error) {
+	return storageList(ctx, s.db, prefix, limit)
+}
+
+func (s *SQLiteStorage) Transaction(ctx context.Context, fn func(StorageTx) error) error {
+	if fn == nil {
+		return coded(CodeBadRequest, "storage transaction callback is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return wrap(CodeStorageError, "begin storage transaction", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if err := fn(sqliteStorageTx{tx: tx}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return wrap(CodeStorageError, "commit storage transaction", err)
+	}
+	committed = true
+	return nil
+}
+
+func (s *SQLiteStorage) SetAlarm(ctx context.Context, dueAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO alarms (singleton, due_at_ms, updated_at_ms)
+		VALUES (1, ?, ?)
+		ON CONFLICT(singleton) DO UPDATE SET due_at_ms = excluded.due_at_ms, updated_at_ms = excluded.updated_at_ms`, dueAt.UnixMilli(), time.Now().UnixMilli())
+	if err != nil {
+		return wrap(CodeStorageError, "set object alarm", err)
+	}
+	if s.factory != nil {
+		if err := s.factory.SetAlarmIndex(ctx, s.id, dueAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetAlarm(ctx context.Context) (*time.Time, error) {
+	var dueAtMS int64
+	err := s.db.QueryRowContext(ctx, `SELECT due_at_ms FROM alarms WHERE singleton = 1`).Scan(&dueAtMS)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, wrap(CodeStorageError, "get object alarm", err)
+	}
+	dueAt := time.UnixMilli(dueAtMS)
+	return &dueAt, nil
+}
+
+func (s *SQLiteStorage) DeleteAlarm(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM alarms WHERE singleton = 1`); err != nil {
+		return wrap(CodeStorageError, "delete object alarm", err)
+	}
+	if s.factory != nil {
+		if err := s.factory.DeleteAlarmIndex(ctx, s.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+type sqliteStorageTx struct {
+	tx *sql.Tx
+}
+
+func (t sqliteStorageTx) Get(ctx context.Context, key string) (any, bool, error) {
+	return storageGet(ctx, t.tx, key)
+}
+
+func (t sqliteStorageTx) Put(ctx context.Context, key string, value any) error {
+	return storagePut(ctx, t.tx, key, value)
+}
+
+func (t sqliteStorageTx) Delete(ctx context.Context, key string) (bool, error) {
+	return storageDelete(ctx, t.tx, key)
+}
+
+func (t sqliteStorageTx) List(ctx context.Context, prefix string, limit int) (map[string]any, error) {
+	return storageList(ctx, t.tx, prefix, limit)
+}
+
+type queryExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func ensureSQLiteSchemaVersion(ctx context.Context, db *sql.DB, label string) error {
+	var version int
+	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		return wrap(CodeStorageError, "read "+label+" schema version", err)
+	}
+	if version == 0 {
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, sqliteSchemaVersion)); err != nil {
+			return wrap(CodeStorageError, "initialize "+label+" schema version", err)
+		}
+		return nil
+	}
+	if version != sqliteSchemaVersion {
+		return coded(CodeStorageError, "%s schema version %d is not supported by runtime schema version %d", label, version, sqliteSchemaVersion)
+	}
+	return nil
+}
+
+func storageGet(ctx context.Context, qe queryExecer, key string) (any, bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false, coded(CodeBadRequest, "storage key is required")
+	}
+	var data []byte
+	err := qe.QueryRowContext(ctx, `SELECT value_json FROM kv WHERE key = ?`, key).Scan(&data)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, wrap(CodeStorageError, "get storage key", err)
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, false, wrap(CodeStorageError, "decode storage value", err)
+	}
+	return value, true, nil
+}
+
+func storagePut(ctx context.Context, qe queryExecer, key string, value any) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return coded(CodeBadRequest, "storage key is required")
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return wrap(CodeBadRequest, "encode storage value", err)
+	}
+	_, err = qe.ExecContext(ctx, `INSERT INTO kv (key, value_json, updated_at_ms)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at_ms = excluded.updated_at_ms`, key, data, time.Now().UnixMilli())
+	if err != nil {
+		return wrap(CodeStorageError, "put storage key", err)
+	}
+	return nil
+}
+
+func storageDelete(ctx context.Context, qe queryExecer, key string) (bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return false, coded(CodeBadRequest, "storage key is required")
+	}
+	result, err := qe.ExecContext(ctx, `DELETE FROM kv WHERE key = ?`, key)
+	if err != nil {
+		return false, wrap(CodeStorageError, "delete storage key", err)
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0, nil
+}
+
+func escapeSQLiteLikePrefix(prefix string) string {
+	var b strings.Builder
+	b.Grow(len(prefix))
+	for _, r := range prefix {
+		if r == '\\' || r == '%' || r == '_' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func storageList(ctx context.Context, qe queryExecer, prefix string, limit int) (map[string]any, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	like := escapeSQLiteLikePrefix(prefix) + "%"
+	rows, err := qe.QueryContext(ctx, `SELECT key, value_json FROM kv WHERE key LIKE ? ESCAPE '\' ORDER BY key LIMIT ?`, like, limit)
+	if err != nil {
+		return nil, wrap(CodeStorageError, "list storage keys", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ret := map[string]any{}
+	for rows.Next() {
+		var key string
+		var data []byte
+		if err := rows.Scan(&key, &data); err != nil {
+			return nil, wrap(CodeStorageError, "scan storage row", err)
+		}
+		var value any
+		if err := json.Unmarshal(data, &value); err != nil {
+			return nil, wrap(CodeStorageError, fmt.Sprintf("decode storage value for %q", key), err)
+		}
+		ret[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return nil, wrap(CodeStorageError, "iterate storage keys", err)
+	}
+	return ret, nil
+}

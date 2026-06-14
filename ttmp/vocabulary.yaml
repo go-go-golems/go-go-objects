@@ -1,0 +1,28 @@
+topics:
+    - slug: goja
+      description: Goja JavaScript runtime
+    - slug: durable-objects
+      description: Durable object actor systems with persistent per-object state
+    - slug: storage
+      description: Storage engines, persistence, and durable state
+    - slug: architecture
+      description: Architecture and design
+    - slug: actor-runtime
+      description: Actor runtime architectures and implementations
+docTypes:
+    - slug: index
+      description: Ticket index document
+    - slug: design-doc
+      description: Design document
+    - slug: reference
+      description: Reference document
+    - slug: task-list
+      description: Task checklist
+intent:
+    - slug: long-term
+      description: Long-term ticket documentation
+    - slug: source-material
+      description: Imported source material
+status:
+    - slug: active
+      description: Active work

@@ -1,0 +1,12 @@
+# xgoja/v2 runtime module fragment for embedding the counter Durable Objects bundle.
+# In a full spec, define an assets source/artifact with id `counter-bundle`
+# rooted at this directory so `bundleAssetPath: objects.js` can read the file.
+runtime:
+  modules:
+    - provider: durableobjects
+      name: durableobjects
+      as: durableobjects
+      config:
+        storageRoot: ./var/durable-objects
+        bundleAsset: counter-bundle
+        bundleAssetPath: objects.js
