@@ -46,3 +46,12 @@ Completed async dispatch validation: normalized owner-call deadline errors to Co
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/actor.go — Timeout normalization for owner-call deadline errors
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/14/GOJA-DO-002--add-async-promise-aware-durable-objects-dispatch/tasks.md — Validation task completion
 
+
+## 2026-06-14
+
+Uploaded GOJA-DO-002 bundle to reMarkable and fixed Mermaid sequence diagram actor aliases so the PDF renders without warnings
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/ttmp/2026/06/14/GOJA-DO-002--add-async-promise-aware-durable-objects-dispatch/design-doc/01-async-durable-objects-dispatch-design-guide.md — Mermaid diagram alias cleanup for reMarkable rendering
+

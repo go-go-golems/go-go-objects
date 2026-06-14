@@ -390,18 +390,18 @@ This is also why the first version should not allow Cloudflare-style interleavin
 ```mermaid
 sequenceDiagram
     participant HTTP as Gateway / Module
-    participant Actor as Actor.Dispatch
+    participant DOActor as Actor.Dispatch
     participant Owner as RuntimeOwner
     participant JS as JS Instance
 
-    HTTP->>Actor: Envelope{KindRPC}
-    Actor->>Owner: Call("durable-object.rpc")
+    HTTP->>DOActor: Envelope{KindRPC}
+    DOActor->>Owner: Call("durable-object.rpc")
     Owner->>JS: instance.method(...args)
     JS-->>Owner: Promise or value
-    Owner-->>Actor: Result built immediately
-    Actor-->>HTTP: Result
+    Owner-->>DOActor: Result built immediately
+    DOActor-->>HTTP: Result
 
-    Note over Actor,HTTP: Promise is not awaited today.
+    Note over DOActor,HTTP: Promise is not awaited today.
 ```
 
 ### Proposed Promise-aware dispatch
@@ -409,29 +409,29 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant HTTP as Gateway / Module
-    participant Actor as Actor.Dispatch
+    participant DOActor as Actor.Dispatch
     participant Owner as RuntimeOwner
     participant JS as JS Instance
     participant Promise as goja.Promise
 
-    HTTP->>Actor: Envelope{KindRPC}
-    Actor->>Owner: invoke method on owner
+    HTTP->>DOActor: Envelope{KindRPC}
+    DOActor->>Owner: invoke method on owner
     Owner->>JS: instance.method(...args)
     JS-->>Owner: value or Promise
-    Owner-->>Actor: raw dispatch value
+    Owner-->>DOActor: raw dispatch value
 
     alt raw value is Promise
         loop until fulfilled/rejected/timeout
-            Actor->>Owner: read Promise state
+            DOActor->>Owner: read Promise state
             Owner->>Promise: State + Result
             Promise-->>Owner: pending/fulfilled/rejected
-            Owner-->>Actor: snapshot
+            Owner-->>DOActor: snapshot
         end
     end
 
-    Actor->>Owner: convert fulfilled value
-    Owner-->>Actor: Result DTO
-    Actor-->>HTTP: Result or typed error
+    DOActor->>Owner: convert fulfilled value
+    Owner-->>DOActor: Result DTO
+    DOActor-->>HTTP: Result or typed error
 ```
 
 ### Compatibility layers

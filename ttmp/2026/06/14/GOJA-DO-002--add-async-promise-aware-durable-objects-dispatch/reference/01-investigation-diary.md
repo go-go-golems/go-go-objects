@@ -295,3 +295,52 @@ After that fix, unit tests, lint, security scans, docmgr validation, and both ge
   `/tmp/durableobjects-counter-async serve durableobjects site --http-listen 127.0.0.1:18889 --durableobjects-storage-root /tmp/do-async-http`
 - Direct serve smoke command:
   `/tmp/durableobjects-counter-async durableobjects serve --addr 127.0.0.1:18890 --durableobjects-storage-root /tmp/do-async-direct`
+
+## Step 5: reMarkable upload and Mermaid cleanup
+
+This final documentation step uploaded the GOJA-DO-002 design bundle to reMarkable. The first upload succeeded, but the renderer warned that two Mermaid sequence diagrams failed because the `Actor` participant/message target was parsed as a Mermaid reserved token.
+
+I renamed the sequence participant alias to `DOActor`, updated the corresponding message targets, and re-uploaded the bundle with `--force`. The corrected upload completed without Mermaid warnings.
+
+### Prompt Context
+
+**User prompt (verbatim):** (same as Step 2)
+
+**Assistant interpretation:** Finish the ticket deliverable by publishing the design/diary bundle to reMarkable and preserving any final rendering fixes.
+
+**Inferred user intent:** Make the async implementation and design package reviewable outside the repository.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Uploaded the GOJA-DO-002 bundle to `/ai/2026/06/14/GOJA-DO-002`.
+- Fixed Mermaid sequence diagram aliases in the design doc.
+- Re-uploaded with `--force`.
+
+### Why
+- The PDF should render diagrams cleanly for review.
+
+### What worked
+- Final upload output: `OK: uploaded GOJA-DO-002 Async Durable Objects Dispatch.pdf -> /ai/2026/06/14/GOJA-DO-002`.
+
+### What didn't work
+- Initial upload printed Mermaid parser warnings for `HTTP->>Actor: Envelope{KindRPC}` even though the upload itself succeeded.
+
+### What I learned
+- Mermaid sequence diagrams can treat `Actor` specially enough that it is safer to use a non-reserved participant alias like `DOActor`.
+
+### What was tricky to build
+- The first attempted fix changed the participant alias but not all message targets, so the renderer still saw `Actor` in message syntax. The successful fix changed both declaration and message endpoints.
+
+### What warrants a second pair of eyes
+- N/A; this was a documentation-rendering cleanup only.
+
+### What should be done in the future
+- Prefer unambiguous Mermaid aliases in long-form design docs that will be rendered to PDF.
+
+### Code review instructions
+- Review only the Mermaid diagram changes in the GOJA-DO-002 design doc.
+- Confirm future uploads report `OK: uploaded ...` without Mermaid warnings.
+
+### Technical details
+- Upload command used `remarquee upload bundle ... --force --non-interactive`.
