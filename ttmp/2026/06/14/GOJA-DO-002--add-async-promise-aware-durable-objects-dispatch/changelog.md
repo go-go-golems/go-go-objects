@@ -74,3 +74,13 @@ Confirmed go-go-goja v2 host-services docs/example commit 63415b9 is local-only 
 
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.mod — Dependency remains on published go-go-goja until v2 cutover commit is reachable
 
+
+## 2026-06-14
+
+Bumped go-go-goja dependency to v0.9.5, which contains the finalized xgoja v2 RuntimePlan API; standalone GOWORK=off tests now pass
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.mod — go-go-goja v0.9.5 dependency bump
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/go.sum — Checksums for go-go-goja v0.9.5 transitive dependencies
+

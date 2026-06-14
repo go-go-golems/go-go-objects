@@ -469,3 +469,54 @@ I therefore left `go.mod` unchanged for now and kept the object-side change focu
 
 ### Technical details
 - Failed command: `GOWORK=off go get github.com/go-go-golems/go-go-goja@63415b9`.
+
+## Step 8: Bump go-go-goja to v0.9.5
+
+This step replaced the earlier assumption that go-go-objects needed to wait for local commit `63415b9`. The released `github.com/go-go-golems/go-go-goja v0.9.5` already contains the finalized xgoja v2 RuntimePlan API needed by the Durable Objects provider tests and templates.
+
+After bumping to `v0.9.5`, standalone `GOWORK=off` tests pass. The only extra module-maintenance step was adding a checksum entry for the new xgoja sourcegraph dependency path pulled in by go-go-goja v0.9.5.
+
+### Prompt Context
+
+**User prompt (verbatim):** "do we need 63415b9 ? the latest version is v0.9.5"
+
+**Assistant interpretation:** Verify whether the published go-go-goja v0.9.5 release is sufficient for go-go-objects instead of depending on the local commit hash.
+
+**Inferred user intent:** Keep go-go-objects portable and pinned to a proper released version where possible.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Ran `GOWORK=off go list -m -versions github.com/go-go-golems/go-go-goja`.
+- Ran `GOWORK=off go get github.com/go-go-golems/go-go-goja@v0.9.5`.
+- Added the missing checksum dependency with `GOWORK=off go get github.com/go-go-golems/go-go-goja/pkg/xgoja/sourcegraph@v0.9.5`.
+- Ran `GOWORK=off go test ./... -count=1`.
+
+### Why
+- A released semantic version is better than a local commit hash for branch portability and CI reproducibility.
+
+### What worked
+- `GOWORK=off go test ./... -count=1` passed after the v0.9.5 bump.
+
+### What didn't work
+- The first test after `go get ...@v0.9.5` failed with a missing `go.sum` entry for `github.com/tree-sitter/tree-sitter-typescript/bindings/go`; adding the sourcegraph package dependency checksum fixed it.
+
+### What I learned
+- `v0.9.5` is sufficient for the Durable Objects xgoja v2 RuntimePlan migration; `63415b9` is not required for go-go-objects.
+
+### What was tricky to build
+- The API compatibility issue and checksum issue looked related at first, but they were separate: `v0.9.5` had the needed API, while `go.sum` simply needed the new transitive sourcegraph module checksum.
+
+### What warrants a second pair of eyes
+- Review whether all new indirect dependencies in `go.mod`/`go.sum` are expected from go-go-goja v0.9.5.
+
+### What should be done in the future
+- Prefer released go-go-goja tags for go-go-objects dependencies unless a specific unreleased API is required.
+
+### Code review instructions
+- Review `go.mod` and `go.sum` first.
+- Validate with `GOWORK=off go test ./... -count=1`.
+
+### Technical details
+- Working dependency: `github.com/go-go-golems/go-go-goja v0.9.5`.
+- Validation command: `GOWORK=off go test ./... -count=1`.

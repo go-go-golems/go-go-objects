@@ -6,7 +6,7 @@ require (
 	github.com/dop251/goja v0.0.0-20251103141225-af2ceb9156d7
 	github.com/dop251/goja_nodejs v0.0.0-20250409162600-f7acab6894b0
 	github.com/go-go-golems/glazed v1.3.6
-	github.com/go-go-golems/go-go-goja v0.9.1
+	github.com/go-go-golems/go-go-goja v0.9.5
 	github.com/go-go-golems/logcopter v0.1.1
 	github.com/mattn/go-sqlite3 v1.14.42
 	gopkg.in/yaml.v3 v3.0.1
@@ -113,6 +113,7 @@ require (
 	github.com/tj/go-naturaldate v1.3.0 // indirect
 	github.com/tree-sitter/go-tree-sitter v0.25.0 // indirect
 	github.com/tree-sitter/tree-sitter-javascript v0.25.0 // indirect
+	github.com/tree-sitter/tree-sitter-typescript v0.23.2 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
