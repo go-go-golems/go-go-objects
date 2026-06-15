@@ -42,6 +42,11 @@ type promiseSnapshot struct {
 	result goja.Value
 }
 
+type awaitValueState struct {
+	promise *goja.Promise
+	value   goja.Value
+}
+
 func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 	if a == nil || a.runtime == nil || a.runtime.Owner == nil {
 		return Result{}, coded(CodeExecutionError, "durable object actor is not initialized")
@@ -253,10 +258,27 @@ func (a *Actor) awaitValue(ctx context.Context, value goja.Value) (goja.Value, e
 	if value == nil {
 		return nil, nil
 	}
-	promise, ok := value.Export().(*goja.Promise)
-	if !ok {
-		return value, nil
+	ret, err := a.runtime.Owner.Call(ctx, "durable-object.promise-detect", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		promise, ok := value.Export().(*goja.Promise)
+		if !ok {
+			return awaitValueState{value: value}, nil
+		}
+		return awaitValueState{promise: promise}, nil
+	})
+	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, preserveCodeOrWrap(CodeExecutionError, "detect durable object promise", err)
 	}
+	state, ok := ret.(awaitValueState)
+	if !ok {
+		return nil, coded(CodeExecutionError, "durable object promise detection returned unexpected result %T", ret)
+	}
+	if state.promise == nil {
+		return state.value, nil
+	}
+	promise := state.promise
 	for {
 		select {
 		case <-ctx.Done():
@@ -369,12 +391,38 @@ func fetchResponseFromValue(vm *goja.Runtime, value goja.Value) FetchResponse {
 
 func (a *Actor) promiseRejectedError(ctx context.Context, value goja.Value) error {
 	ret, err := a.runtime.Owner.Call(ctx, "durable-object.promise-rejection", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		if durableErr := durableErrorFromValue(vm, value); durableErr != nil {
+			return nil, durableErr
+		}
 		return valueString(vm, value), nil
 	})
 	if err != nil {
 		return preserveCodeOrWrap(CodeExecutionError, "format durable object promise rejection", err)
 	}
 	return coded(CodeExecutionError, "durable object promise rejected: %s", ret)
+}
+
+func durableErrorFromValue(vm *goja.Runtime, value goja.Value) *Error {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return nil
+	}
+	if durableErr := durableErrorFromExport(value.Export()); durableErr != nil {
+		return durableErr
+	}
+	obj := value.ToObject(vm)
+	if obj == nil {
+		return nil
+	}
+	for _, key := range []string{"value", "cause", "error"} {
+		child := obj.Get(key)
+		if child == nil || goja.IsUndefined(child) || goja.IsNull(child) {
+			continue
+		}
+		if durableErr := durableErrorFromExport(child.Export()); durableErr != nil {
+			return durableErr
+		}
+	}
+	return nil
 }
 
 func valueString(vm *goja.Runtime, value goja.Value) string {
@@ -449,11 +497,15 @@ func durableErrorFrom(err error) *Error {
 	}
 	var exception *goja.Exception
 	if errors.As(err, &exception) {
-		if exported := exception.Value().Export(); exported != nil {
-			if nestedErr, ok := exported.(error); ok && errors.As(nestedErr, &durableErr) {
-				return durableErr
-			}
-		}
+		return durableErrorFromExport(exception.Value().Export())
+	}
+	return nil
+}
+
+func durableErrorFromExport(exported any) *Error {
+	var durableErr *Error
+	if exportedErr, ok := exported.(error); ok && errors.As(exportedErr, &durableErr) {
+		return durableErr
 	}
 	return nil
 }

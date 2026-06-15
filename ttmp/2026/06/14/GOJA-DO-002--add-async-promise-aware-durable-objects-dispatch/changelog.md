@@ -117,3 +117,14 @@ Added proper Glazed CLI wiring and embedded help entries for go-go-objects overv
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/doc/03-xgoja-provider.md — xgoja provider help page
 - /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main.go — Glazed root command
 
+
+## 2026-06-14
+
+Addressed PR #2 review comments: Promise detection now runs on the runtime owner, async Go-backed rejections preserve durable error codes, and CLI shutdown avoids gosec G118
+
+### Related Files
+
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/cmd/go-go-objects/main.go — gosec G118 shutdown context fix
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/actor.go — Owner-thread Promise detection and rejection error-code preservation
+- /home/manuel/workspaces/2026-06-12/goja-durable-objects/go-go-objects/pkg/durableobjects/durableobjects_test.go — Regression for async coded rejection
+

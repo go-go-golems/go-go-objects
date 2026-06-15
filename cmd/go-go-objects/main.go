@@ -214,7 +214,7 @@ func runServer(ctx context.Context, settings serveSettings) error {
 	}
 	go func() {
 		<-serverCtx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(serverCtx), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()

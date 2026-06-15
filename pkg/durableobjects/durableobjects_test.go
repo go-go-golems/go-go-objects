@@ -38,6 +38,10 @@ class Counter {
     await Promise.resolve();
     throw new Error("async boom");
   }
+  async badStorageAfterAwait() {
+    await Promise.resolve();
+    this.state.storage.put("", 1);
+  }
   pending() {
     return new Promise(() => {});
   }
@@ -309,6 +313,25 @@ func TestAsyncRPCDispatchPropagatesRejectedPromise(t *testing.T) {
 	}
 	if got := CodeOf(err); got != CodeExecutionError {
 		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeExecutionError, err)
+	}
+}
+
+func TestAsyncRPCDispatchPreservesCodedRejectedErrors(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-coded-reject")
+	if err != nil {
+		t.Fatalf("NewObjectID() error = %v", err)
+	}
+	payload, err := json.Marshal([]any{})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "badStorageAfterAwait", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("expected async storage error")
+	}
+	if got := CodeOf(err); got != CodeBadRequest {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeBadRequest, err)
 	}
 }
 

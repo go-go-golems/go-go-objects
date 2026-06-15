@@ -746,3 +746,64 @@ I also added first-class help pages for the application overview, JavaScript Dur
 ### Technical details
 - The root command implements `cmds.BareCommand` because the primary behavior is starting an HTTP server, not emitting rows.
 - The new direct dependency movement in `go.mod` is `github.com/spf13/cobra` moving from indirect to direct.
+
+## Step 12: Address PR #2 Promise ownership and rejection review comments
+
+This step addressed the remaining PR #2 review comments after the per-actor async serialization fix. The important correctness issue was that Promise detection called `goja.Value.Export()` from the dispatch goroutine after leaving `RuntimeOwner.Call`; that still touches goja-owned state, so detection now happens inside an owner-thread callback.
+
+The second issue was error-code preservation for async rejections. Synchronous Go-backed durable errors already preserve codes like `CodeBadRequest`, but when the same error happened after an `await`, the rejected Promise value was formatted as a generic execution error. I now inspect goja `GoError` rejection objects on the owner thread and extract their `value` property, which contains the original Go error.
+
+### Prompt Context
+
+**User prompt (verbatim):** "Address code review issues: https://github.com/go-go-golems/go-go-objects/pull/2"
+
+**Assistant interpretation:** Fetch PR #2 automated review comments, determine which findings are still applicable, patch them, validate, and commit.
+
+**Inferred user intent:** Make the pull request review-clean and ready for CI/merge.
+
+**Commit (code):** pending for this step.
+
+### What I did
+- Queried PR #2 inline review comments through `gh api repos/go-go-golems/go-go-objects/pulls/2/comments`.
+- Confirmed the P1 async serialization finding was already fixed by the actor dispatch gate.
+- Moved Promise detection/export into `runtime.Owner.Call` via the `durable-object.promise-detect` owner callback.
+- Added `durableErrorFromValue` / `durableErrorFromExport` extraction for rejected goja `GoError` values.
+- Added `TestAsyncRPCDispatchPreservesCodedRejectedErrors`.
+- Fixed a new gosec G118 warning in the Glazed CLI shutdown goroutine by using `context.WithoutCancel(serverCtx)` for the shutdown timeout parent.
+
+### Why
+- goja values and Promise objects are not goroutine-safe; every inspection that touches them must run on the owner thread.
+- Async handlers should not change API error semantics just because the durable error happens after an `await`.
+
+### What worked
+- The coded rejection test now preserves `CodeBadRequest` for `async badStorageAfterAwait()`.
+- Full tests, lint, gosec, and govulncheck pass.
+
+### What didn't work
+- The first implementation only checked exported rejection values, `cause`, and `error`; goja `NewGoError` stores the original Go error in the `value` property, so `CodeBadRequest` was still lost until `value` was included.
+- Initial full gosec validation failed on `cmd/go-go-objects/main.go` G118 after the Glazed CLI refactor.
+
+### What I learned
+- goja `Runtime.NewGoError(err)` creates a JS `GoError` object whose `value` property contains the original Go `error`.
+- `RuntimeOwner.Call` is needed not only for method calls and Promise polling, but also for Promise type detection itself.
+
+### What was tricky to build
+- We still return `goja.Value` and `*goja.Promise` pointers across owner calls as opaque references, but all operations on those references now happen inside later owner callbacks. The boundary is safe as long as non-owner goroutines only hold references and never inspect/export them.
+
+### What warrants a second pair of eyes
+- Whether `durableErrorFromValue` should eventually become a shared helper in go-go-goja for GoError extraction.
+- Whether future rejection handling should preserve more JS error metadata in addition to durable error codes.
+
+### What should be done in the future
+- Re-request Codex review on PR #2 after pushing this commit.
+
+### Code review instructions
+- Start in `pkg/durableobjects/actor.go`, especially `awaitValue`, `promiseRejectedError`, and `durableErrorFromValue`.
+- Review the regression in `TestAsyncRPCDispatchPreservesCodedRejectedErrors`.
+- Validate with `GOWORK=off go test ./... -count=1`, `golangci-lint`, `gosec`, and `govulncheck`.
+
+### Technical details
+- PR comments addressed:
+  - P1 serialize async dispatches per actor: fixed by earlier dispatch gate.
+  - P2 keep promise detection on runtime owner: fixed by `durable-object.promise-detect`.
+  - P2 preserve coded errors from promise rejections: fixed by GoError `value` extraction.
