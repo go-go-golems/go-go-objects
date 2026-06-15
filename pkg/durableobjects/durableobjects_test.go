@@ -23,6 +23,51 @@ class Counter {
     this.state.storage.put("count", next);
     return next;
   }
+  async asyncIncrement(by) {
+    await Promise.resolve();
+    return this.increment(by);
+  }
+  async asyncReadThenIncrement() {
+    const current = this.state.storage.get("count") || 0;
+    await Promise.resolve();
+    const next = current + 1;
+    this.state.storage.put("count", next);
+    return next;
+  }
+  async rejectAsync() {
+    await Promise.resolve();
+    throw new Error("async boom");
+  }
+  async badStorageAfterAwait() {
+    await Promise.resolve();
+    this.state.storage.put("", 1);
+  }
+  pending() {
+    return new Promise(() => {});
+  }
+  latePendingWrite() {
+    return new Promise(resolve => {
+      this.lateResolve = resolve;
+    }).then(() => {
+      const current = this.state.storage.get("late") || 0;
+      this.state.storage.put("late", current + 1);
+      return current + 1;
+    });
+  }
+  resolveLate() {
+    if (!this.lateResolve) return false;
+    this.lateResolve();
+    return true;
+  }
+  lateValue() {
+    return this.state.storage.get("late") || 0;
+  }
+  badAsyncTransaction() {
+    return this.state.storage.transaction(async tx => {
+      await Promise.resolve();
+      tx.put("bad", true);
+    });
+  }
   value() {
     return this.state.storage.get("count") || 0;
   }
@@ -36,6 +81,9 @@ class Counter {
   fetch(req) {
     if (req.path === "/count") {
       return { status: 200, headers: { "X-Counter": "yes" }, body: String(this.state.storage.get("count") || 0) };
+    }
+    if (req.path === "/async-count") {
+      return Promise.resolve({ status: 202, headers: { "X-Async": "yes" }, body: String(this.state.storage.get("count") || 0) });
     }
     return { status: 404, body: "not found" };
   }
@@ -51,7 +99,8 @@ class Counter {
     while (Date.now() < end) {}
     return true;
   }
-  alarm() {
+  async alarm() {
+    await Promise.resolve();
     const current = this.state.storage.get("alarmCount") || 0;
     this.state.storage.put("alarmCount", current + 1);
   }
@@ -218,6 +267,206 @@ func TestConcurrentFirstDispatchStartsOneActor(t *testing.T) {
 	}
 }
 
+func TestAsyncRPCDispatchAwaitsFulfilledPromise(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-rpc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rpcNumber(t, mgr, id, "asyncIncrement", []any{7}); got != 7 {
+		t.Fatalf("asyncIncrement = %v, want 7", got)
+	}
+	if got := rpcNumber(t, mgr, id, "value", nil); got != 7 {
+		t.Fatalf("value after asyncIncrement = %v, want 7", got)
+	}
+}
+
+func TestAsyncRPCDispatchSerializesPendingPromisesPerActor(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-serialized")
+	if err != nil {
+		t.Fatalf("NewObjectID() error = %v", err)
+	}
+	const calls = 16
+	var wg sync.WaitGroup
+	errCh := make(chan error, calls)
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			payload, err := json.Marshal([]any{})
+			if err != nil {
+				errCh <- err
+				return
+			}
+			_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "asyncReadThenIncrement", ArgsJSON: payload})
+			if err != nil {
+				errCh <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("Dispatch() error = %v", err)
+		}
+	}
+	if got := rpcNumber(t, mgr, id, "value", nil); got != calls {
+		t.Fatalf("value after concurrent async dispatches = %v, want %d", got, calls)
+	}
+}
+
+func TestAsyncRPCDispatchPropagatesRejectedPromise(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-reject")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "rejectAsync", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch rejectAsync succeeded, want error")
+	}
+	if got := CodeOf(err); got != CodeExecutionError {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeExecutionError, err)
+	}
+}
+
+func TestAsyncRPCDispatchPreservesCodedRejectedErrors(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-coded-reject")
+	if err != nil {
+		t.Fatalf("NewObjectID() error = %v", err)
+	}
+	payload, err := json.Marshal([]any{})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "badStorageAfterAwait", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("expected async storage error")
+	}
+	if got := CodeOf(err); got != CodeBadRequest {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeBadRequest, err)
+	}
+}
+
+func TestAsyncRPCDispatchPendingPromiseTimesOut(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 10 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "async-pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "pending", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch pending succeeded, want timeout")
+	}
+	if got := CodeOf(err); got != CodeTimeout {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeTimeout, err)
+	}
+}
+
+func TestTimedOutPromiseCannotMutateDuringLaterDispatch(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 10 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "late-continuation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "latePendingWrite", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch latePendingWrite succeeded, want timeout")
+	}
+	if got := CodeOf(err); got != CodeTimeout {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeTimeout, err)
+	}
+	if got := rpcValue(t, mgr, id, "resolveLate", nil); got != false {
+		t.Fatalf("resolveLate = %v, want false after actor eviction", got)
+	}
+	if got := rpcNumber(t, mgr, id, "lateValue", nil); got != 0 {
+		t.Fatalf("lateValue = %v, want 0", got)
+	}
+}
+
+func TestWaiterOnPoisonedActorRetriesOnFreshActor(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 20 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "poisoned-waiter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "latePendingWrite", ArgsJSON: payload})
+		firstErr <- err
+	}()
+	time.Sleep(5 * time.Millisecond)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "value", ArgsJSON: payload})
+		secondDone <- err
+	}()
+	if err := <-firstErr; err == nil || CodeOf(err) != CodeTimeout {
+		t.Fatalf("first Dispatch error = %v, want timeout", err)
+	}
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second Dispatch error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Dispatch did not retry after poisoned actor")
+	}
+	if got := rpcNumber(t, mgr, id, "lateValue", nil); got != 0 {
+		t.Fatalf("lateValue = %v, want 0", got)
+	}
+}
+
+func TestAsyncTransactionCallbackStillRejected(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-tx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "badAsyncTransaction", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch badAsyncTransaction succeeded, want error")
+	}
+	if got := CodeOf(err); got != CodeBadRequest {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeBadRequest, err)
+	}
+}
+
 func TestCounterRPCPersistsAcrossEviction(t *testing.T) {
 	ctx := context.Background()
 	mgr := newTestManager(t)
@@ -283,6 +532,30 @@ func TestFetchGateway(t *testing.T) {
 	}
 	if got := w.Header().Get("X-Counter"); got != "yes" {
 		t.Fatalf("X-Counter = %q, want yes", got)
+	}
+}
+
+func TestAsyncFetchDispatchAwaitsFulfilledPromise(t *testing.T) {
+	mgr := newTestManager(t)
+	id, err := NewObjectID("COUNTER", "async-fetch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rpcNumber(t, mgr, id, "increment", []any{4})
+
+	gateway := NewGateway(mgr, GatewayOptions{DevErrors: true})
+	req := httptest.NewRequest(http.MethodGet, "/fetch/COUNTER/async-fetch/async-count", nil)
+	w := httptest.NewRecorder()
+	gateway.ServeHTTP(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s, want 202", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "4" {
+		t.Fatalf("body = %q, want 4", got)
+	}
+	if got := w.Header().Get("X-Async"); got != "yes" {
+		t.Fatalf("X-Async = %q, want yes", got)
 	}
 }
 

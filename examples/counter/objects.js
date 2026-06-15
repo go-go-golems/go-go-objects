@@ -4,7 +4,8 @@ class Counter {
     this.env = env;
   }
 
-  increment(by = 1) {
+  async increment(by = 1) {
+    await Promise.resolve();
     const current = this.state.storage.get("count") || 0;
     const next = current + by;
     this.state.storage.put("count", next);
@@ -15,7 +16,7 @@ class Counter {
     return this.state.storage.get("count") || 0;
   }
 
-  fetch(req) {
+  async fetch(req) {
     if (req.path === "/count") {
       return { status: 200, body: String(this.value()) };
     }

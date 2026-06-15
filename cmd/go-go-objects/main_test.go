@@ -4,7 +4,47 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestNewRootCommandIncludesGlazedHelp(t *testing.T) {
+	root, err := newRootCommand()
+	if err != nil {
+		t.Fatalf("newRootCommand() error = %v", err)
+	}
+	if root.Use != "go-go-objects" {
+		t.Fatalf("root.Use = %q, want go-go-objects", root.Use)
+	}
+	if root.PersistentFlags().Lookup("log-level") == nil {
+		t.Fatal("expected log-level flag from Glazed logging section")
+	}
+	if root.Commands() == nil {
+		t.Fatal("expected child commands")
+	}
+	foundHelp := false
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "help" {
+			foundHelp = true
+			break
+		}
+	}
+	if !foundHelp {
+		t.Fatal("expected Glazed help command")
+	}
+}
+
+func TestParseDurationFlag(t *testing.T) {
+	d, err := parseDurationFlag("cpu-timeout", "250ms")
+	if err != nil {
+		t.Fatalf("parseDurationFlag() error = %v", err)
+	}
+	if d != 250*time.Millisecond {
+		t.Fatalf("duration = %v, want 250ms", d)
+	}
+	if _, err := parseDurationFlag("cpu-timeout", "not-a-duration"); err == nil {
+		t.Fatal("expected invalid duration error")
+	}
+}
 
 func TestLoadInputsUsesBuiltInDemoWhenPathsOmitted(t *testing.T) {
 	manifest, bundle, err := loadInputs("", "")

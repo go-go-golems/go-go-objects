@@ -3,6 +3,7 @@ package durableobjects
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -11,16 +12,45 @@ import (
 )
 
 type Actor struct {
-	id         ObjectID
-	className  string
-	runtime    *engine.Runtime
-	instance   *goja.Object // owner-thread only; access through runtime.Owner.Call.
-	storage    Storage
-	manager    *Manager
-	cpuTimeout time.Duration
-	lastUsedNS atomic.Int64
-	active     atomic.Int32
+	id           ObjectID
+	className    string
+	runtime      *engine.Runtime
+	instance     *goja.Object // owner-thread only; access through runtime.Owner.Call.
+	storage      Storage
+	manager      *Manager
+	cpuTimeout   time.Duration
+	dispatchGate chan struct{}
+	lastUsedNS   atomic.Int64
+	active       atomic.Int32
+	poisoned     atomic.Bool
 }
+
+type dispatchValueKind int
+
+const (
+	dispatchValueRPC dispatchValueKind = iota
+	dispatchValueFetch
+	dispatchValueAlarm
+)
+
+type dispatchValue struct {
+	kind  dispatchValueKind
+	value goja.Value
+}
+
+type promiseSnapshot struct {
+	state  goja.PromiseState
+	result goja.Value
+}
+
+type awaitValueState struct {
+	promise *goja.Promise
+	value   goja.Value
+}
+
+var errActorPoisoned = errors.New("durable object actor was evicted after dispatch cancellation")
+
+const actorPoisonCloseTimeout = time.Second
 
 func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 	if a == nil || a.runtime == nil || a.runtime.Owner == nil {
@@ -32,19 +62,40 @@ func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 		a.touch()
 		a.active.Add(-1)
 	}()
-	return a.withInterrupt(func() (Result, error) {
-		ret, err := a.runtime.Owner.Call(ctx, "durable-object."+string(env.Kind), func(ctx context.Context, vm *goja.Runtime) (any, error) {
-			return a.dispatchOnOwner(ctx, vm, env)
-		})
+	release, err := a.acquireDispatch(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
+	if a.isPoisoned() {
+		return Result{}, errActorPoisoned
+	}
+	return a.withInterrupt(ctx, func(ctx context.Context) (Result, error) {
+		raw, err := a.invokeDispatch(ctx, env)
 		if err != nil {
-			return Result{}, wrap(CodeExecutionError, "execute durable object dispatch", err)
+			return Result{}, err
 		}
-		result, ok := ret.(Result)
-		if !ok {
-			return Result{}, coded(CodeExecutionError, "durable object dispatch returned unexpected result %T", ret)
+		settled, err := a.awaitDispatchValue(ctx, raw)
+		if err != nil {
+			return Result{}, err
 		}
-		return result, nil
+		return a.convertDispatchValue(ctx, settled)
 	})
+}
+
+func (a *Actor) acquireDispatch(ctx context.Context) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a == nil || a.dispatchGate == nil {
+		return func() {}, nil
+	}
+	select {
+	case a.dispatchGate <- struct{}{}:
+		return func() { <-a.dispatchGate }, nil
+	case <-ctx.Done():
+		return nil, timeoutOrContextError(ctx)
+	}
 }
 
 func (a *Actor) Close(ctx context.Context) error {
@@ -52,6 +103,23 @@ func (a *Actor) Close(ctx context.Context) error {
 		return nil
 	}
 	return a.runtime.Close(ctx)
+}
+
+func (a *Actor) isPoisoned() bool {
+	return a != nil && a.poisoned.Load()
+}
+
+func (a *Actor) poisonAndEvict() {
+	if a == nil || !a.poisoned.CompareAndSwap(false, true) {
+		return
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), actorPoisonCloseTimeout)
+	defer cancel()
+	if a.manager != nil {
+		_ = a.manager.evictActor(closeCtx, a.id, a)
+		return
+	}
+	_ = a.Close(closeCtx)
 }
 
 func (a *Actor) touch() {
@@ -99,26 +167,43 @@ func (a *Actor) bootstrap(ctx context.Context, bundle *Bundle) error {
 	return err
 }
 
-func (a *Actor) dispatchOnOwner(ctx context.Context, vm *goja.Runtime, env Envelope) (Result, error) {
+func (a *Actor) invokeDispatch(ctx context.Context, env Envelope) (dispatchValue, error) {
+	ret, err := a.runtime.Owner.Call(ctx, "durable-object."+string(env.Kind), func(ctx context.Context, vm *goja.Runtime) (any, error) {
+		return a.invokeDispatchOnOwner(ctx, vm, env)
+	})
+	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return dispatchValue{}, ctxErr
+		}
+		return dispatchValue{}, preserveCodeOrWrap(CodeExecutionError, "execute durable object dispatch", err)
+	}
+	value, ok := ret.(dispatchValue)
+	if !ok {
+		return dispatchValue{}, coded(CodeExecutionError, "durable object dispatch returned unexpected result %T", ret)
+	}
+	return value, nil
+}
+
+func (a *Actor) invokeDispatchOnOwner(ctx context.Context, vm *goja.Runtime, env Envelope) (dispatchValue, error) {
 	if a.instance == nil {
-		return Result{}, coded(CodeExecutionError, "durable object instance is not initialized")
+		return dispatchValue{}, coded(CodeExecutionError, "durable object instance is not initialized")
 	}
 	switch env.Kind {
 	case KindRPC:
-		return a.callRPC(vm, env.Method, env.ArgsJSON)
+		return a.invokeRPC(vm, env.Method, env.ArgsJSON)
 	case KindFetch:
-		return a.callFetch(vm, env.Request)
+		return a.invokeFetch(vm, env.Request)
 	case KindAlarm:
-		return a.callAlarm(vm)
+		return a.invokeAlarm(vm)
 	default:
 		_ = ctx
-		return Result{}, coded(CodeBadRequest, "unsupported durable object dispatch kind %q", env.Kind)
+		return dispatchValue{}, coded(CodeBadRequest, "unsupported durable object dispatch kind %q", env.Kind)
 	}
 }
 
-func (a *Actor) callRPC(vm *goja.Runtime, method string, argsJSON []byte) (Result, error) {
+func (a *Actor) invokeRPC(vm *goja.Runtime, method string, argsJSON []byte) (dispatchValue, error) {
 	if method == "" {
-		return Result{}, coded(CodeBadRequest, "rpc method is required")
+		return dispatchValue{}, coded(CodeBadRequest, "rpc method is required")
 	}
 	var args []any
 	if len(argsJSON) > 0 {
@@ -127,7 +212,7 @@ func (a *Actor) callRPC(vm *goja.Runtime, method string, argsJSON []byte) (Resul
 				Args []any `json:"args"`
 			}
 			if err2 := json.Unmarshal(argsJSON, &wrapper); err2 != nil {
-				return Result{}, wrap(CodeBadRequest, "decode rpc arguments", err)
+				return dispatchValue{}, wrap(CodeBadRequest, "decode rpc arguments", err)
 			}
 			args = wrapper.Args
 		}
@@ -135,7 +220,7 @@ func (a *Actor) callRPC(vm *goja.Runtime, method string, argsJSON []byte) (Resul
 	fnVal := a.instance.Get(method)
 	fn, ok := goja.AssertFunction(fnVal)
 	if !ok {
-		return Result{}, coded(CodeMethodNotFound, "durable object method %q not found", method)
+		return dispatchValue{}, coded(CodeMethodNotFound, "durable object method %q not found", method)
 	}
 	jsArgs := make([]goja.Value, len(args))
 	for i, arg := range args {
@@ -143,23 +228,19 @@ func (a *Actor) callRPC(vm *goja.Runtime, method string, argsJSON []byte) (Resul
 	}
 	value, err := fn(a.instance, jsArgs...)
 	if err != nil {
-		return Result{}, wrap(CodeExecutionError, "call durable object method", err)
+		return dispatchValue{}, preserveCodeOrWrap(CodeExecutionError, "call durable object method", err)
 	}
-	payload, err := json.Marshal(value.Export())
-	if err != nil {
-		return Result{}, wrap(CodeExecutionError, "encode rpc result", err)
-	}
-	return Result{ValueJSON: payload}, nil
+	return dispatchValue{kind: dispatchValueRPC, value: value}, nil
 }
 
-func (a *Actor) callFetch(vm *goja.Runtime, req *FetchRequest) (Result, error) {
+func (a *Actor) invokeFetch(vm *goja.Runtime, req *FetchRequest) (dispatchValue, error) {
 	if req == nil {
-		return Result{}, coded(CodeBadRequest, "fetch request is required")
+		return dispatchValue{}, coded(CodeBadRequest, "fetch request is required")
 	}
 	fnVal := a.instance.Get("fetch")
 	fn, ok := goja.AssertFunction(fnVal)
 	if !ok {
-		return Result{Response: &FetchResponse{Status: 404, Body: "fetch not implemented"}}, nil
+		return dispatchValue{kind: dispatchValueFetch, value: vm.ToValue(map[string]any{"status": 404, "body": "fetch not implemented"})}, nil
 	}
 	value, err := fn(a.instance, vm.ToValue(map[string]any{
 		"method":  req.Method,
@@ -171,8 +252,153 @@ func (a *Actor) callFetch(vm *goja.Runtime, req *FetchRequest) (Result, error) {
 		"rawBody": req.RawBody,
 	}))
 	if err != nil {
-		return Result{}, wrap(CodeExecutionError, "call durable object fetch", err)
+		return dispatchValue{}, preserveCodeOrWrap(CodeExecutionError, "call durable object fetch", err)
 	}
+	return dispatchValue{kind: dispatchValueFetch, value: value}, nil
+}
+
+func (a *Actor) invokeAlarm(vm *goja.Runtime) (dispatchValue, error) {
+	fnVal := a.instance.Get("alarm")
+	fn, ok := goja.AssertFunction(fnVal)
+	if !ok {
+		return dispatchValue{kind: dispatchValueAlarm}, nil
+	}
+	value, err := fn(a.instance)
+	if err != nil {
+		return dispatchValue{}, preserveCodeOrWrap(CodeExecutionError, "call durable object alarm", err)
+	}
+	return dispatchValue{kind: dispatchValueAlarm, value: value}, nil
+}
+
+func (a *Actor) awaitDispatchValue(ctx context.Context, raw dispatchValue) (dispatchValue, error) {
+	value, err := a.awaitValue(ctx, raw.value)
+	if err != nil {
+		return dispatchValue{}, err
+	}
+	raw.value = value
+	return raw, nil
+}
+
+func (a *Actor) awaitValue(ctx context.Context, value goja.Value) (goja.Value, error) {
+	if value == nil {
+		return nil, nil
+	}
+	ret, err := a.runtime.Owner.Call(ctx, "durable-object.promise-detect", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		promise, ok := value.Export().(*goja.Promise)
+		if !ok {
+			return awaitValueState{value: value}, nil
+		}
+		return awaitValueState{promise: promise}, nil
+	})
+	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, preserveCodeOrWrap(CodeExecutionError, "detect durable object promise", err)
+	}
+	state, ok := ret.(awaitValueState)
+	if !ok {
+		return nil, coded(CodeExecutionError, "durable object promise detection returned unexpected result %T", ret)
+	}
+	if state.promise == nil {
+		return state.value, nil
+	}
+	promise := state.promise
+	for {
+		select {
+		case <-ctx.Done():
+			a.poisonAndEvict()
+			return nil, timeoutOrContextError(ctx)
+		default:
+		}
+		ret, err := a.runtime.Owner.Call(ctx, "durable-object.promise-state", func(_ context.Context, vm *goja.Runtime) (any, error) {
+			return promiseSnapshot{state: promise.State(), result: promise.Result()}, nil
+		})
+		if err != nil {
+			if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+				a.poisonAndEvict()
+				return nil, ctxErr
+			}
+			return nil, preserveCodeOrWrap(CodeExecutionError, "read durable object promise state", err)
+		}
+		snapshot, ok := ret.(promiseSnapshot)
+		if !ok {
+			return nil, coded(CodeExecutionError, "durable object promise state returned unexpected result %T", ret)
+		}
+		switch snapshot.state {
+		case goja.PromiseStatePending:
+			select {
+			case <-ctx.Done():
+				a.poisonAndEvict()
+				return nil, timeoutOrContextError(ctx)
+			case <-time.After(5 * time.Millisecond):
+			}
+		case goja.PromiseStateRejected:
+			return nil, a.promiseRejectedError(ctx, snapshot.result)
+		case goja.PromiseStateFulfilled:
+			return snapshot.result, nil
+		default:
+			return nil, coded(CodeExecutionError, "durable object promise has unknown state %d", snapshot.state)
+		}
+	}
+}
+
+func (a *Actor) convertDispatchValue(ctx context.Context, value dispatchValue) (Result, error) {
+	switch value.kind {
+	case dispatchValueRPC:
+		return a.convertRPCResult(ctx, value.value)
+	case dispatchValueFetch:
+		return a.convertFetchResult(ctx, value.value)
+	case dispatchValueAlarm:
+		return Result{}, nil
+	default:
+		return Result{}, coded(CodeExecutionError, "unknown durable object dispatch value kind %d", value.kind)
+	}
+}
+
+func (a *Actor) convertRPCResult(ctx context.Context, value goja.Value) (Result, error) {
+	ret, err := a.runtime.Owner.Call(ctx, "durable-object.rpc-result", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		var exported any
+		if value != nil && !goja.IsUndefined(value) {
+			exported = value.Export()
+		}
+		payload, err := json.Marshal(exported)
+		if err != nil {
+			return nil, wrap(CodeExecutionError, "encode rpc result", err)
+		}
+		return payload, nil
+	})
+	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return Result{}, ctxErr
+		}
+		return Result{}, preserveCodeOrWrap(CodeExecutionError, "convert durable object rpc result", err)
+	}
+	payload, ok := ret.([]byte)
+	if !ok {
+		return Result{}, coded(CodeExecutionError, "durable object rpc conversion returned unexpected result %T", ret)
+	}
+	return Result{ValueJSON: payload}, nil
+}
+
+func (a *Actor) convertFetchResult(ctx context.Context, value goja.Value) (Result, error) {
+	ret, err := a.runtime.Owner.Call(ctx, "durable-object.fetch-result", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return fetchResponseFromValue(vm, value), nil
+	})
+	if err != nil {
+		if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+			return Result{}, ctxErr
+		}
+		return Result{}, preserveCodeOrWrap(CodeExecutionError, "convert durable object fetch result", err)
+	}
+	response, ok := ret.(FetchResponse)
+	if !ok {
+		return Result{}, coded(CodeExecutionError, "durable object fetch conversion returned unexpected result %T", ret)
+	}
+	return Result{Response: &response}, nil
+}
+
+func fetchResponseFromValue(vm *goja.Runtime, value goja.Value) FetchResponse {
 	obj := value.ToObject(vm)
 	response := FetchResponse{Status: 200}
 	if status := obj.Get("status"); status != nil && !goja.IsUndefined(status) && !goja.IsNull(status) {
@@ -188,24 +414,69 @@ func (a *Actor) callFetch(vm *goja.Runtime, req *FetchRequest) (Result, error) {
 	if body := obj.Get("body"); body != nil && !goja.IsUndefined(body) && !goja.IsNull(body) {
 		response.Body = body.Export()
 	}
-	return Result{Response: &response}, nil
+	return response
 }
 
-func (a *Actor) callAlarm(vm *goja.Runtime) (Result, error) {
-	fnVal := a.instance.Get("alarm")
-	fn, ok := goja.AssertFunction(fnVal)
-	if !ok {
-		return Result{}, nil
+func (a *Actor) promiseRejectedError(ctx context.Context, value goja.Value) error {
+	ret, err := a.runtime.Owner.Call(ctx, "durable-object.promise-rejection", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		if durableErr := durableErrorFromValue(vm, value); durableErr != nil {
+			return nil, durableErr
+		}
+		return valueString(vm, value), nil
+	})
+	if err != nil {
+		return preserveCodeOrWrap(CodeExecutionError, "format durable object promise rejection", err)
 	}
-	if _, err := fn(a.instance); err != nil {
-		return Result{}, wrap(CodeExecutionError, "call durable object alarm", err)
-	}
-	return Result{}, nil
+	return coded(CodeExecutionError, "durable object promise rejected: %s", ret)
 }
 
-func (a *Actor) withInterrupt(fn func() (Result, error)) (Result, error) {
+func durableErrorFromValue(vm *goja.Runtime, value goja.Value) *Error {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return nil
+	}
+	if durableErr := durableErrorFromExport(value.Export()); durableErr != nil {
+		return durableErr
+	}
+	obj := value.ToObject(vm)
+	if obj == nil {
+		return nil
+	}
+	for _, key := range []string{"value", "cause", "error"} {
+		child := obj.Get(key)
+		if child == nil || goja.IsUndefined(child) || goja.IsNull(child) {
+			continue
+		}
+		if durableErr := durableErrorFromExport(child.Export()); durableErr != nil {
+			return durableErr
+		}
+	}
+	return nil
+}
+
+func valueString(vm *goja.Runtime, value goja.Value) string {
+	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+		return "undefined"
+	}
+	obj := value.ToObject(vm)
+	if obj != nil {
+		if message := obj.Get("message"); message != nil && !goja.IsUndefined(message) && !goja.IsNull(message) {
+			return message.String()
+		}
+	}
+	return value.String()
+}
+
+func (a *Actor) withInterrupt(parent context.Context, fn func(context.Context) (Result, error)) (Result, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	dispatchCtx, cancel := context.WithCancel(parent)
+	if a.cpuTimeout > 0 {
+		dispatchCtx, cancel = context.WithTimeout(parent, a.cpuTimeout)
+	}
+	defer cancel()
 	if a.cpuTimeout <= 0 || a.runtime == nil || a.runtime.VM == nil {
-		return fn()
+		return fn(dispatchCtx)
 	}
 	timeoutErr := coded(CodeTimeout, "durable object CPU budget exceeded")
 	var interrupted atomic.Bool
@@ -217,9 +488,52 @@ func (a *Actor) withInterrupt(fn func() (Result, error)) (Result, error) {
 		_ = timer.Stop()
 		a.runtime.VM.ClearInterrupt()
 	}()
-	result, err := fn()
+	result, err := fn(dispatchCtx)
 	if err != nil && interrupted.Load() {
 		return Result{}, timeoutErr
 	}
-	return result, err
+	if err != nil {
+		return Result{}, err
+	}
+	return result, nil
+}
+
+func timeoutOrContextError(ctx context.Context) error {
+	if ctx == nil || ctx.Err() == nil {
+		return nil
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return coded(CodeTimeout, "durable object dispatch timed out")
+	}
+	return ctx.Err()
+}
+
+func preserveCodeOrWrap(code ErrorCode, message string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if durableErr := durableErrorFrom(err); durableErr != nil {
+		return durableErr
+	}
+	return wrap(code, message, err)
+}
+
+func durableErrorFrom(err error) *Error {
+	var durableErr *Error
+	if errors.As(err, &durableErr) {
+		return durableErr
+	}
+	var exception *goja.Exception
+	if errors.As(err, &exception) {
+		return durableErrorFromExport(exception.Value().Export())
+	}
+	return nil
+}
+
+func durableErrorFromExport(exported any) *Error {
+	var durableErr *Error
+	if exportedErr, ok := exported.(error); ok && errors.As(exportedErr, &durableErr) {
+		return durableErr
+	}
+	return nil
 }
