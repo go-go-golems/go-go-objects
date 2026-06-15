@@ -2,6 +2,7 @@ package durableobjects
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -84,17 +85,26 @@ func (m *Manager) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 		dispatchErr = coded(CodeUnknownNamespace, "unknown durable object namespace %q", env.ID.Namespace)
 		return Result{}, dispatchErr
 	}
-	actor, err := m.getOrStart(ctx, env.ID)
-	if err != nil {
-		dispatchErr = err
-		return Result{}, dispatchErr
+	for attempt := 0; attempt < 2; attempt++ {
+		actor, err := m.getOrStart(ctx, env.ID)
+		if err != nil {
+			dispatchErr = err
+			return Result{}, dispatchErr
+		}
+		result, err := actor.Dispatch(ctx, env)
+		if errors.Is(err, errActorPoisoned) {
+			dispatchErr = err
+			continue
+		}
+		if err != nil {
+			dispatchErr = err
+			return Result{}, dispatchErr
+		}
+		dispatchErr = nil
+		return result, nil
 	}
-	result, err := actor.Dispatch(ctx, env)
-	if err != nil {
-		dispatchErr = err
-		return Result{}, dispatchErr
-	}
-	return result, nil
+	dispatchErr = coded(CodeExecutionError, "durable object actor was evicted during dispatch; retry budget exhausted")
+	return Result{}, dispatchErr
 }
 
 func (m *Manager) emit(event Event) {
@@ -105,14 +115,32 @@ func (m *Manager) emit(event Event) {
 }
 
 func (m *Manager) Evict(ctx context.Context, id ObjectID) error {
+	return m.evictActor(ctx, id, nil)
+}
+
+func (m *Manager) evictActor(ctx context.Context, id ObjectID, expected *Actor) error {
 	m.mu.Lock()
-	actor := m.actors[id]
-	delete(m.actors, id)
+	actor := expected
+	removed := false
+	current := m.actors[id]
+	if expected == nil {
+		actor = current
+		if current != nil {
+			delete(m.actors, id)
+			removed = true
+		}
+	} else if current == expected {
+		delete(m.actors, id)
+		removed = true
+	}
 	m.mu.Unlock()
 	if actor == nil {
 		return nil
 	}
-	m.emit(Event{Name: EventEvict, ID: id})
+	actor.poisoned.Store(true)
+	if removed {
+		m.emit(Event{Name: EventEvict, ID: id})
+	}
 	err := actor.Close(ctx)
 	m.emit(Event{Name: EventActorStop, ID: id, Error: err})
 	return err
@@ -131,6 +159,7 @@ func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Unlock()
 	var ret error
 	for _, actor := range actors {
+		actor.poisoned.Store(true)
 		if err := actor.Close(ctx); err != nil && ret == nil {
 			ret = err
 		}
@@ -218,6 +247,7 @@ func (m *Manager) EvictIdle(ctx context.Context, now time.Time) (int, error) {
 	evicted := 0
 	var ret error
 	for _, candidate := range candidates {
+		candidate.actor.poisoned.Store(true)
 		m.emit(Event{Name: EventEvict, ID: candidate.id})
 		closeErr := candidate.actor.Close(ctx)
 		if closeErr != nil && ret == nil {

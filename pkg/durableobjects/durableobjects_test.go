@@ -45,6 +45,23 @@ class Counter {
   pending() {
     return new Promise(() => {});
   }
+  latePendingWrite() {
+    return new Promise(resolve => {
+      this.lateResolve = resolve;
+    }).then(() => {
+      const current = this.state.storage.get("late") || 0;
+      this.state.storage.put("late", current + 1);
+      return current + 1;
+    });
+  }
+  resolveLate() {
+    if (!this.lateResolve) return false;
+    this.lateResolve();
+    return true;
+  }
+  lateValue() {
+    return this.state.storage.get("late") || 0;
+  }
   badAsyncTransaction() {
     return this.state.storage.transaction(async tx => {
       await Promise.resolve();
@@ -357,6 +374,80 @@ func TestAsyncRPCDispatchPendingPromiseTimesOut(t *testing.T) {
 	}
 	if got := CodeOf(err); got != CodeTimeout {
 		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeTimeout, err)
+	}
+}
+
+func TestTimedOutPromiseCannotMutateDuringLaterDispatch(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 10 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "late-continuation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	_, err = mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "latePendingWrite", ArgsJSON: payload})
+	if err == nil {
+		t.Fatal("Dispatch latePendingWrite succeeded, want timeout")
+	}
+	if got := CodeOf(err); got != CodeTimeout {
+		t.Fatalf("CodeOf(err) = %s, want %s; err=%v", got, CodeTimeout, err)
+	}
+	if got := rpcValue(t, mgr, id, "resolveLate", nil); got != false {
+		t.Fatalf("resolveLate = %v, want false after actor eviction", got)
+	}
+	if got := rpcNumber(t, mgr, id, "lateValue", nil); got != 0 {
+		t.Fatalf("lateValue = %v, want 0", got)
+	}
+}
+
+func TestWaiterOnPoisonedActorRetriesOnFreshActor(t *testing.T) {
+	mgr, err := NewManager(
+		Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		NewBundle(counterBundle),
+		NewSQLiteStorageFactory(t.TempDir()),
+		Options{CPUTimeout: 20 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close(context.Background()) })
+	id, err := NewObjectID("COUNTER", "poisoned-waiter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal([]any{})
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "latePendingWrite", ArgsJSON: payload})
+		firstErr <- err
+	}()
+	time.Sleep(5 * time.Millisecond)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := mgr.Dispatch(context.Background(), Envelope{Kind: KindRPC, ID: id, Method: "value", ArgsJSON: payload})
+		secondDone <- err
+	}()
+	if err := <-firstErr; err == nil || CodeOf(err) != CodeTimeout {
+		t.Fatalf("first Dispatch error = %v, want timeout", err)
+	}
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second Dispatch error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second Dispatch did not retry after poisoned actor")
+	}
+	if got := rpcNumber(t, mgr, id, "lateValue", nil); got != 0 {
+		t.Fatalf("lateValue = %v, want 0", got)
 	}
 }
 

@@ -22,6 +22,7 @@ type Actor struct {
 	dispatchGate chan struct{}
 	lastUsedNS   atomic.Int64
 	active       atomic.Int32
+	poisoned     atomic.Bool
 }
 
 type dispatchValueKind int
@@ -47,6 +48,10 @@ type awaitValueState struct {
 	value   goja.Value
 }
 
+var errActorPoisoned = errors.New("durable object actor was evicted after dispatch cancellation")
+
+const actorPoisonCloseTimeout = time.Second
+
 func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 	if a == nil || a.runtime == nil || a.runtime.Owner == nil {
 		return Result{}, coded(CodeExecutionError, "durable object actor is not initialized")
@@ -62,6 +67,9 @@ func (a *Actor) Dispatch(ctx context.Context, env Envelope) (Result, error) {
 		return Result{}, err
 	}
 	defer release()
+	if a.isPoisoned() {
+		return Result{}, errActorPoisoned
+	}
 	return a.withInterrupt(ctx, func(ctx context.Context) (Result, error) {
 		raw, err := a.invokeDispatch(ctx, env)
 		if err != nil {
@@ -95,6 +103,23 @@ func (a *Actor) Close(ctx context.Context) error {
 		return nil
 	}
 	return a.runtime.Close(ctx)
+}
+
+func (a *Actor) isPoisoned() bool {
+	return a != nil && a.poisoned.Load()
+}
+
+func (a *Actor) poisonAndEvict() {
+	if a == nil || !a.poisoned.CompareAndSwap(false, true) {
+		return
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), actorPoisonCloseTimeout)
+	defer cancel()
+	if a.manager != nil {
+		_ = a.manager.evictActor(closeCtx, a.id, a)
+		return
+	}
+	_ = a.Close(closeCtx)
 }
 
 func (a *Actor) touch() {
@@ -282,6 +307,7 @@ func (a *Actor) awaitValue(ctx context.Context, value goja.Value) (goja.Value, e
 	for {
 		select {
 		case <-ctx.Done():
+			a.poisonAndEvict()
 			return nil, timeoutOrContextError(ctx)
 		default:
 		}
@@ -290,6 +316,7 @@ func (a *Actor) awaitValue(ctx context.Context, value goja.Value) (goja.Value, e
 		})
 		if err != nil {
 			if ctxErr := timeoutOrContextError(ctx); ctxErr != nil {
+				a.poisonAndEvict()
 				return nil, ctxErr
 			}
 			return nil, preserveCodeOrWrap(CodeExecutionError, "read durable object promise state", err)
@@ -302,6 +329,7 @@ func (a *Actor) awaitValue(ctx context.Context, value goja.Value) (goja.Value, e
 		case goja.PromiseStatePending:
 			select {
 			case <-ctx.Done():
+				a.poisonAndEvict()
 				return nil, timeoutOrContextError(ctx)
 			case <-time.After(5 * time.Millisecond):
 			}
