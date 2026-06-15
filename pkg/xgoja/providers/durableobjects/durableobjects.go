@@ -22,6 +22,7 @@ import (
 	"github.com/go-go-golems/go-go-goja/pkg/xgoja/providerapi"
 	httpprovider "github.com/go-go-golems/go-go-goja/pkg/xgoja/providers/http"
 	"github.com/go-go-golems/go-go-objects/pkg/durableobjects"
+	"github.com/go-go-golems/go-go-objects/pkg/xgoja/providers/durableobjects/doc"
 	"gopkg.in/yaml.v3"
 )
 
@@ -36,6 +37,7 @@ type GatewayService struct {
 
 func Register(registry *providerapi.ProviderRegistry) error {
 	capability := newCapability()
+	docFS, docRoot := doc.HelpFS()
 	return registry.Package(PackageID,
 		providerapi.Module{
 			Name:         "durableobjects",
@@ -56,6 +58,26 @@ func Register(registry *providerapi.ProviderRegistry) error {
 			NewCommandSet: func(ctx providerapi.CommandSetContext) (*providerapi.CommandSet, error) {
 				return newServeCommandSet(ctx)
 			},
+		},
+
+		// HelpSource bundles the go-go-objects Glazed help pages into any
+		// generated xgoja binary that selects this source in its buildspec:
+		//
+		//   sources:
+		//     - id: go-go-objects-help
+		//       kind: help
+		//       from:
+		//         provider:
+		//           provider: go-go-objects-durableobjects
+		//           source: go-go-objects
+		//
+		// The pages then surface through both `help <slug>` (cobra) and
+		// require("docs").bySlug(...) (the docaccess docs module).
+		providerapi.HelpSource{
+			Name:        "go-go-objects",
+			Description: "Durable Objects overview, JavaScript API, and xgoja provider guide",
+			FS:          docFS,
+			Root:        docRoot,
 		},
 	)
 }
