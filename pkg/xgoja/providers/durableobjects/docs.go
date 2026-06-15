@@ -60,6 +60,7 @@ func newDocsListCommand(hs *help.HelpSystem) cmds.Command {
 	return &docsListCommand{
 		CommandDescription: cmds.NewCommandDescription(
 			"list",
+			cmds.WithParents("docs"),
 			cmds.WithShort("List bundled go-go-objects help pages"),
 			cmds.WithLong("List the Glazed help pages embedded by the durableobjects provider. Output is a Glaze table and can be rendered as text, JSON, CSV, etc. through standard Glazed flags."),
 		),
@@ -112,6 +113,7 @@ func newDocsShowCommand(hs *help.HelpSystem) cmds.Command {
 	return &docsShowCommand{
 		CommandDescription: cmds.NewCommandDescription(
 			"show",
+			cmds.WithParents("docs"),
 			cmds.WithShort("Print a bundled go-go-objects help page"),
 			cmds.WithLong("Print the rendered Markdown body of one embedded help page, looked up by its Glazed slug (for example go-go-objects-js-api)."),
 			cmds.WithArguments(
@@ -161,6 +163,7 @@ func newDocsServeCommand(hs *help.HelpSystem) cmds.Command {
 	return &docsServeCommand{
 		CommandDescription: cmds.NewCommandDescription(
 			"serve",
+			cmds.WithParents("docs"),
 			cmds.WithShort("Serve bundled go-go-objects docs over HTTP"),
 			cmds.WithLong("Start an HTTP server that exposes the embedded help pages as JSON. GET /docs lists pages; GET /docs/{slug} returns one page. Useful for non-CLI consumers and integration tests."),
 			cmds.WithFlags(

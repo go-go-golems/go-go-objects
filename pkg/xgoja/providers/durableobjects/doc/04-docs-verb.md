@@ -70,7 +70,7 @@ Unknown slugs return `404`. The server binds to `127.0.0.1:8788` by default.
 
 ## Relationship to the help source
 
-The verb is independent of the buildspec `kind: help` source. Selecting both gives the richest experience:
+The verb is independent of the buildspec `kind: help` source, but selecting both gives the richest experience. With the help source selected, the same pages are available through `help <slug>` (cobra) in addition to the `docs` verb:
 
 ```yaml
 sources:
@@ -88,7 +88,9 @@ commands:
     mount: durableobjects
 ```
 
-With both selected, the same pages are available through `help <slug>` (cobra), through `require("docs").bySlug(...)` (when a `repl`/`eval` command is present), and through the `docs` verb.
+Both the `docs` verb and `help <slug>` read from the same embedded pages and cannot diverge within one binary.
+
+> Note: the JavaScript `require("docs")` docaccess module is available in `goja-repl` but is not yet wired into generated xgoja eval/run/repl runtimes. Exposing provider help sources to JavaScript inside xgoja is tracked as future work and would require wiring the docaccess runtime registrar into the xgoja runtime factory.
 
 ## Troubleshooting
 

@@ -88,7 +88,7 @@ The Durable Objects xgoja provider (`go-go-objects/pkg/xgoja/providers/durableob
 
 ### Success criteria
 
-1. A generated xgoja binary that selects the Durable Objects help source exposes the three pages via `help <slug>` and via `require("docs").bySlug(...)`.
+1. A generated xgoja binary that selects the Durable Objects help source exposes the pages via `help <slug>` (cobra). (The JavaScript `require("docs")` docaccess module is a `goja-repl` feature and is **not** wired into generated xgoja runtimes today; see Open Questions.)
 2. The same binary, when given the `docs` command in its buildspec, exposes `durableobjects docs list`, `durableobjects docs show <slug>`, and `durableobjects docs serve`.
 3. No edits to `go-go-goja` are required to achieve 1 and 2.
 
@@ -464,7 +464,7 @@ The three Markdown files live at `cmd/go-go-objects/doc/{01-overview,02-javascri
 | Need | Current state | Gap |
 | --- | --- | --- |
 | Generated binary can show go-go-objects help via `help <slug>` | Not possible; docs live only in the standalone binary. | No `providerapi.HelpSource` is registered. |
-| Generated binary can query docs from JS via `require("docs")` | Not possible; no help source feeds the docaccess hub. | Same root cause: no HelpSource. |
+| Generated binary can query docs from JS via `require("docs")` | Not wired: the docaccess runtime registrar is added by `goja-repl` but not by the xgoja runtime factory. The HelpSource only feeds the cobra `help` system. | Tracked as a future enhancement (wire `docaccess/runtime.NewRegistrar` into `pkg/xgoja/app/factory.go`). |
 | Generated binary has a dedicated `docs` command | Not possible; only `serve` command set exists. | No `docs` `CommandSetProvider`. |
 | Docs are authored once, shared by provider + standalone binary | Duplicated knowledge; only the binary embeds them. | Docs are under `cmd/...`, not under the importable provider package. |
 | An intern can implement this without touching `go-go-goja` | Mechanism exists and is tested. | No guide ties the pieces together for go-go-objects. |
@@ -580,7 +580,7 @@ Design goals for the verb:
 - `durableobjects docs show <slug>` — Writer command; prints the rendered Markdown body.
 - `durableobjects docs serve` — Bare command; starts an HTTP server that exposes the help system (mirrors the standalone binary's doc-serving role, generalized).
 
-All three build their own `*help.HelpSystem` from the embedded FS so the verb works even when the binary does not select the help source globally. (A binary that *also* selects the help source will have the same docs available via `help <slug>` and `require("docs")`.)
+All three build their own `*help.HelpSystem` from the embedded FS so the verb works even when the binary does not select the help source globally. (A binary that *also* selects the help source will have the same docs available via `help <slug>`. The JavaScript `require("docs")` surface is a goja-repl feature not yet wired into xgoja runtimes.)
 
 #### 6.4.1 Command set factory
 
@@ -662,7 +662,7 @@ func (c *docsShowCommand) RunIntoWriter(ctx context.Context, vals *values.Values
 }
 ```
 
-This intentionally reuses the exact lookup the docaccess glazed adapter uses (`GetSectionWithSlug`), so behavior is identical whether a page is reached via `docs show <slug>`, `help <slug>`, or `require("docs").bySlug(...)`.
+This intentionally reuses the exact lookup the docaccess glazed adapter uses (`GetSectionWithSlug`), so behavior is identical whether a page is reached via `docs show <slug>` or `help <slug>` (and, in goja-repl, `require("docs").bySlug(...)`).
 
 #### 6.4.4 `serve` (Bare command)
 
@@ -695,7 +695,9 @@ GET /docs/{slug}                -> {"title","body","topics","metadata"}
 
 ### 6.5 End-to-end flows after the change
 
-**Flow A — `help <slug>` and `require("docs")` (bundle the docs):**
+**Flow A — `help <slug>` (bundle the docs):**
+
+> The JavaScript `require("docs")` surface shown at the bottom of this diagram is available in `goja-repl` but is **not** wired into generated xgoja runtimes (the docaccess runtime registrar is not added by `pkg/xgoja/app/factory.go`). It is shown for completeness and tracked as future work.
 
 ```
 buildspec: sources:[{kind:help, provider.go-go-objects-durableobjects/source:go-go-objects}]
@@ -708,13 +710,13 @@ installRootFramework -> loadConfiguredHelpSources
    │  ResolveHelpSource("go-go-objects-durableobjects","go-go-objects")
    │  helpSystem.LoadSectionsFromFS(docFS, ".")
    ▼
-help_cmd.SetupCobraRootCommand(helpSystem, root)        # help <slug>
-   │  (and, when repl/eval selected:)
+help_cmd.SetupCobraRootCommand(helpSystem, root)        # help <slug>  (works in xgoja)
+   │  (goja-repl only — not wired in xgoja today:)
    ▼
-docaccess glazed provider wraps helpSystem  ->  require("docs").bySlug("go-go-objects","go-go-objects-overview")
+docaccess glazed provider wraps helpSystem  ->  require("docs").bySlug(...)   # future work
 ```
 
-Note the source **ID** that JavaScript sees is the buildspec `id` (e.g. `go-go-objects-help`), **not** the provider `Name`. Interns frequently trip here. `docs.sources()` always prints the authoritative IDs.
+Note the source **ID** that JavaScript sees (in goja-repl) is the buildspec `id` (e.g. `go-go-objects-help`), **not** the provider `Name`. Interns frequently trip here. `docs.sources()` always prints the authoritative IDs.
 
 **Flow B — the `docs` verb (mounted command):**
 
@@ -979,6 +981,7 @@ curl -sf http://127.0.0.1:8788/docs/go-go-objects-overview           # 200 JSON
 1. Should `docs serve` require authentication or bind to localhost only? (Default: localhost, matching `serve.go`.)
 2. Should the verb expose jsdoc/plugin docs in addition to Glazed help? (Default: no — keep it scoped to go-go-objects pages.)
 3. Should the standalone `cmd/go-go-objects` binary be deleted in favor of `xgoja generate`? (Decision D4 — maintainer sign-off.)
+4. **Wiring `require("docs")` into xgoja.** During implementation (example 18) we confirmed the docaccess runtime registrar is not added by `pkg/xgoja/app/factory.go`, so `require("docs")` resolves in `goja-repl` but not in generated xgoja eval/run/repl runtimes. Exposing provider HelpSources to JavaScript inside xgoja is a clean follow-up (add `docaccess/runtime.NewRegistrar` to the factory's module list, with HelpSources built from the loaded help system) and is tracked as a separate ticket. This does not affect the two delivered surfaces (`help <slug>` and the `docs` verb).
 
 ---
 
