@@ -98,8 +98,8 @@ func TestDocsListCommandEmitsAllPages(t *testing.T) {
 		t.Fatalf("RunIntoGlazeProcessor: %v", err)
 	}
 	rows := processor.Table.Rows
-	if len(rows) != 3 {
-		t.Fatalf("expected 3 rows, got %d", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(rows))
 	}
 	gotSlugs := map[string]bool{}
 	for _, row := range rows {
@@ -107,7 +107,7 @@ func TestDocsListCommandEmitsAllPages(t *testing.T) {
 			gotSlugs[toString(v)] = true
 		}
 	}
-	for _, want := range []string{"go-go-objects-overview", "go-go-objects-js-api", "go-go-objects-xgoja-provider"} {
+	for _, want := range []string{"go-go-objects-overview", "go-go-objects-js-api", "go-go-objects-xgoja-provider", "go-go-objects-docs-verb"} {
 		if !gotSlugs[want] {
 			t.Errorf("missing slug %q in list output: %v", want, gotSlugs)
 		}
@@ -169,8 +169,8 @@ func TestDocsServeHTTP(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
 		t.Fatalf("decode /docs: %v", err)
 	}
-	if len(items) != 3 {
-		t.Errorf("GET /docs returned %d items, want 3", len(items))
+	if len(items) != 4 {
+		t.Errorf("GET /docs returned %d items, want 4", len(items))
 	}
 
 	// GET /docs/{slug} -> detail with a body.

@@ -50,6 +50,7 @@ func TestRegisterExposesHelpSource(t *testing.T) {
 	sort.Strings(got)
 
 	want := []string{
+		"go-go-objects-docs-verb",
 		"go-go-objects-js-api",
 		"go-go-objects-overview",
 		"go-go-objects-xgoja-provider",
