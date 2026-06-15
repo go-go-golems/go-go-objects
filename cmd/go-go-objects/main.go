@@ -18,8 +18,8 @@ import (
 	"github.com/go-go-golems/glazed/pkg/cmds/values"
 	"github.com/go-go-golems/glazed/pkg/help"
 	help_cmd "github.com/go-go-golems/glazed/pkg/help/cmd"
-	"github.com/go-go-golems/go-go-objects/cmd/go-go-objects/doc"
 	"github.com/go-go-golems/go-go-objects/pkg/durableobjects"
+	"github.com/go-go-golems/go-go-objects/pkg/xgoja/providers/durableobjects/doc"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
