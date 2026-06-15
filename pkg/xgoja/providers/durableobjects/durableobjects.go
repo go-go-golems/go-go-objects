@@ -59,6 +59,14 @@ func Register(registry *providerapi.ProviderRegistry) error {
 				return newServeCommandSet(ctx)
 			},
 		},
+		providerapi.CommandSetProvider{
+			Name:         "docs",
+			DefaultMount: "durableobjects",
+			Description:  "List, show, and serve go-go-objects documentation",
+			NewCommandSet: func(ctx providerapi.CommandSetContext) (*providerapi.CommandSet, error) {
+				return newDocsCommandSet(ctx)
+			},
+		},
 
 		// HelpSource bundles the go-go-objects Glazed help pages into any
 		// generated xgoja binary that selects this source in its buildspec:
