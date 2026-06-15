@@ -9,6 +9,10 @@ topics:
       description: Architecture and design
     - slug: actor-runtime
       description: Actor runtime architectures and implementations
+    - slug: documentation
+      description: Documentation systems, help pages, and doc access
+    - slug: xgoja
+      description: xgoja generated binary and provider system
 docTypes:
     - slug: index
       description: Ticket index document
