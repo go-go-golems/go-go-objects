@@ -3,6 +3,9 @@ pre-commit:
     lint:
       glob: '*.go'
       run: make lint
+    logcopter-check:
+      glob: '*.go'
+      run: make logcopter-check
     test:
       glob: '*.go'
       run: make test
@@ -14,6 +17,10 @@ pre-push:
       run: make goreleaser
     lint:
       run: make lint
+    logcopter-check:
+      run: make logcopter-check
+    docsctl-check:
+      run: make docsctl-check
     test:
       run: make test
   parallel: true
