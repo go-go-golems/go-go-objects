@@ -80,13 +80,19 @@ The module exposes:
 | --- | --- |
 | `rpc(namespace, name, method, args)` | Dispatch an RPC method and return the settled result. |
 | `fetch(namespace, name, request)` | Dispatch a fetch request and return a response object. |
-| `gateway()` / `handler()` | Return a mountable HTTP handler object for the xgoja HTTP provider. |
+| `rpcForActor(namespace, method, args)` | Dispatch to the authenticated planned-route actor's HMAC-derived private object. Requires a host-provided `BoundDispatcherService`. |
+| `fetchForActor(namespace, request)` | Fetch from the authenticated planned-route actor's HMAC-derived private object. Requires a host-provided `BoundDispatcherService`. |
+| `gateway()` / `handler()` | Return a caller-named mountable HTTP handler only when `enableRawGateway` is explicitly true. |
 
 The module call blocks until the object handler's returned Promise settles or the Durable Objects dispatch timeout expires.
+
+The raw APIs accept a physical object name and are disabled as HTTP gateways by default. For an authenticated end-user application, construct `durableobjects.NewBoundDispatcher` in the Go host, inject it with an `ActorID(context.Context)` resolver under `BoundDispatcherHostServiceKey`, and call only the actor-bound functions from planned routes. The host-specific resolver reads the actor from the host-enforced route context; the JavaScript function signature intentionally has no actor ID or object-name parameter.
 
 ## HTTP composition
 
 Combine the Durable Objects provider with the xgoja HTTP provider when JavaScript should decide where the gateway is mounted.
+
+Set `enableRawGateway: true` only for this low-level composition mode. Do not expose it as a per-user data API.
 
 ```javascript
 const express = require("express");

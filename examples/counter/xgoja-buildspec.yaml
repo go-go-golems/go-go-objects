@@ -31,6 +31,9 @@ runtime:
         bundleAssetPath: objects.js
         alarmInterval: 1s
         idleInterval: 1m
+        # This example intentionally exposes caller-selected object names.
+        # End-user applications should leave this false and inject a BoundDispatcher.
+        enableRawGateway: true
     - provider: go-go-goja-http
       name: express
       as: express

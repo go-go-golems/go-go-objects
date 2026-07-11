@@ -24,6 +24,7 @@ import (
 	"github.com/go-go-golems/go-go-goja/pkg/xgoja/app"
 	"github.com/go-go-golems/go-go-goja/pkg/xgoja/providerapi"
 	httpprovider "github.com/go-go-golems/go-go-goja/pkg/xgoja/providers/http"
+	"github.com/go-go-golems/go-go-objects/pkg/durableobjects"
 )
 
 const testBundle = `
@@ -42,6 +43,8 @@ class Counter {
 }
 exports.objects = { Counter };
 `
+
+type actorIDContextKey struct{}
 
 func TestRegister(t *testing.T) {
 	registry := providerapi.NewProviderRegistry()
@@ -296,6 +299,82 @@ func TestModuleConfigLoadsBundleFromEmbeddedAsset(t *testing.T) {
 	if got := ret.(goja.Value).Export(); got != int64(3) && got != float64(3) && got != 3 {
 		t.Fatalf("rpc result = %#v", got)
 	}
+	if _, err := rt.Owner.Call(ctx, "durableobjects.raw-gateway-disabled", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`require("durableobjects").gateway()`)
+	}); err == nil || !strings.Contains(err.Error(), "raw durableobjects gateway is disabled") {
+		t.Fatalf("raw gateway default error=%v", err)
+	}
+}
+
+func TestActorBoundModuleUsesAuthenticatedContextAndIsolatesUsers(t *testing.T) {
+	ctx := context.Background()
+	manager, err := durableobjects.NewManager(
+		durableobjects.Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		durableobjects.NewBundle(testBundle),
+		durableobjects.NewSQLiteStorageFactory(t.TempDir()),
+		durableobjects.Options{CPUTimeout: 2 * time.Second},
+	)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	defer func() { _ = manager.Close(context.Background()) }()
+	bound, err := durableobjects.NewBoundDispatcher(manager, bytes.Repeat([]byte{'k'}, 32), []string{"COUNTER"})
+	if err != nil {
+		t.Fatalf("bound dispatcher: %v", err)
+	}
+	loader, err := newCapability().newModuleLoader(providerapi.ModuleSetupContext{
+		Context: ctx,
+		Host: testServiceHost{services: map[string][]any{
+			BoundDispatcherHostServiceKey: {BoundDispatcherService{
+				Dispatcher: bound,
+				ActorID: func(ctx context.Context) (string, error) {
+					actorID, _ := ctx.Value(actorIDContextKey{}).(string)
+					return actorID, nil
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("newModuleLoader: %v", err)
+	}
+	factory, err := engine.NewRuntimeFactoryBuilder(
+		engine.WithImplicitDefaultRegistryModules(false),
+		engine.WithDataOnlyDefaultRegistryModules(true),
+	).WithModules(engine.NativeModuleRegistrar{ModuleName: "durableobjects", Loader: loader}).Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	rt, err := factory.NewRuntime(engine.WithStartupContext(ctx), engine.WithLifetimeContext(ctx))
+	if err != nil {
+		t.Fatalf("NewRuntime: %v", err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+
+	call := func(actorID, expression string) (any, error) {
+		actorCtx := context.WithValue(ctx, actorIDContextKey{}, actorID)
+		return rt.Owner.Call(actorCtx, "actor-bound durableobjects", func(_ context.Context, vm *goja.Runtime) (any, error) {
+			return vm.RunString(expression)
+		})
+	}
+	alice, err := call("alice", `require("durableobjects").rpcForActor("COUNTER", "increment", [7])`)
+	if err != nil {
+		t.Fatalf("alice increment: %v", err)
+	}
+	bob, err := call("bob", `require("durableobjects").fetchForActor("COUNTER", { method: "GET", path: "/count" }).body`)
+	if err != nil {
+		t.Fatalf("bob read: %v", err)
+	}
+	if got := alice.(goja.Value).Export(); got != int64(7) && got != float64(7) && got != 7 {
+		t.Fatalf("alice result=%#v", got)
+	}
+	if got := bob.(goja.Value).Export(); got != "0" {
+		t.Fatalf("bob observed alice state: %#v", got)
+	}
+	if _, err := rt.Owner.Call(ctx, "actor-bound durableobjects without actor", func(_ context.Context, vm *goja.Runtime) (any, error) {
+		return vm.RunString(`require("durableobjects").fetchForActor("COUNTER", { method: "GET", path: "/count" })`)
+	}); err == nil || !strings.Contains(err.Error(), "authenticated planned route") {
+		t.Fatalf("missing actor error=%v", err)
+	}
 }
 
 func TestExpressMountsDurableObjectsGatewayHandler(t *testing.T) {
@@ -304,10 +383,11 @@ func TestExpressMountsDurableObjectsGatewayHandler(t *testing.T) {
 	host := gojahttp.NewHost(gojahttp.HostOptions{})
 	bundlePath, _ := writeBundleAndManifest(t)
 	config, err := json.Marshal(map[string]any{
-		"storageRoot":   t.TempDir(),
-		"bundlePath":    bundlePath,
-		"alarmInterval": "0",
-		"idleInterval":  "0",
+		"storageRoot":      t.TempDir(),
+		"bundlePath":       bundlePath,
+		"alarmInterval":    "0",
+		"idleInterval":     "0",
+		"enableRawGateway": true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -360,10 +440,11 @@ func TestModuleMountsGatewayOnExternalHTTPHost(t *testing.T) {
 	host := gojahttp.NewHost(gojahttp.HostOptions{})
 	bundlePath, _ := writeBundleAndManifest(t)
 	config, err := json.Marshal(map[string]any{
-		"storageRoot":   t.TempDir(),
-		"bundlePath":    bundlePath,
-		"alarmInterval": "0",
-		"idleInterval":  "0",
+		"storageRoot":      t.TempDir(),
+		"bundlePath":       bundlePath,
+		"alarmInterval":    "0",
+		"idleInterval":     "0",
+		"enableRawGateway": true,
 	})
 	if err != nil {
 		t.Fatal(err)
