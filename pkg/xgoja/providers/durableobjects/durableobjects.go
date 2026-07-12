@@ -239,11 +239,18 @@ func (c *capability) InitRuntimeFromSections(ctx context.Context, vals *values.V
 }
 
 func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (require.ModuleLoader, error) {
-	configuredCtx, configuredCancel := context.WithCancel(context.Background())
-	configured, err := gatewayServiceFromModuleConfig(configuredCtx, ctx.Host, ctx.Config)
+	external, err := externalGatewayService(ctx.Host)
 	if err != nil {
-		configuredCancel()
 		return nil, err
+	}
+	configuredCtx, configuredCancel := context.WithCancel(context.Background())
+	configured := GatewayService{}
+	if external.Manager == nil {
+		configured, err = gatewayServiceFromModuleConfig(configuredCtx, ctx.Host, ctx.Config)
+		if err != nil {
+			configuredCancel()
+			return nil, err
+		}
 	}
 	if configured.Manager == nil {
 		configuredCancel()
@@ -257,11 +264,6 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			_ = manager.Close(context.Background())
 			return nil, err
 		}
-	}
-	external, err := externalGatewayService(ctx.Host)
-	if err != nil {
-		configuredCancel()
-		return nil, err
 	}
 	bound, err := externalBoundDispatcherService(ctx.Host)
 	if err != nil {

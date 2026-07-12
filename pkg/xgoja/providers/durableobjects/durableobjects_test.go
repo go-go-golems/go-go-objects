@@ -377,6 +377,44 @@ func TestActorBoundModuleUsesAuthenticatedContextAndIsolatesUsers(t *testing.T) 
 	}
 }
 
+func TestExternalManagerSuppressesConfiguredManagerSideEffects(t *testing.T) {
+	ctx := context.Background()
+	manager, err := durableobjects.NewManager(
+		durableobjects.Manifest{Objects: map[string]string{"COUNTER": "Counter"}},
+		durableobjects.NewBundle(testBundle),
+		durableobjects.NewSQLiteStorageFactory(t.TempDir()),
+		durableobjects.Options{CPUTimeout: 2 * time.Second},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = manager.Close(context.Background()) }()
+	configuredRoot := filepath.Join(t.TempDir(), "must-not-be-created")
+	config, err := json.Marshal(map[string]any{
+		"storageRoot": configuredRoot,
+		"bundlePath":  filepath.Join(t.TempDir(), "missing.js"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader, err := newCapability().newModuleLoader(providerapi.ModuleSetupContext{
+		Context: ctx,
+		Config:  config,
+		Host: testServiceHost{services: map[string][]any{
+			HostServiceKey: {GatewayService{Manager: manager, EnableRawGateway: false}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("external manager should suppress invalid configured manager: %v", err)
+	}
+	if loader == nil {
+		t.Fatal("module loader is nil")
+	}
+	if _, err := os.Stat(configuredRoot); !os.IsNotExist(err) {
+		t.Fatalf("configured storage root was touched: %v", err)
+	}
+}
+
 func TestExpressMountsDurableObjectsGatewayHandler(t *testing.T) {
 	ctx := context.Background()
 	capability := newCapability()
