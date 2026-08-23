@@ -35,11 +35,18 @@ func TestBoundDispatcherDerivesStableIsolatedObjectIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bob id: %v", err)
 	}
+	aliceWithLeadingSpace, err := dispatcher.ObjectIDForActor("PROFILE", " issuer\x00alice")
+	if err != nil {
+		t.Fatalf("alice with leading space id: %v", err)
+	}
 	if aliceFirst != aliceSecond {
 		t.Fatalf("derivation is not stable: %#v != %#v", aliceFirst, aliceSecond)
 	}
 	if aliceFirst == bob || aliceFirst.Name == bob.Name {
 		t.Fatalf("two actors share object identity: alice=%#v bob=%#v", aliceFirst, bob)
+	}
+	if aliceFirst == aliceWithLeadingSpace || aliceFirst.Name == aliceWithLeadingSpace.Name {
+		t.Fatalf("opaque actor IDs were normalized: alice=%#v aliceWithLeadingSpace=%#v", aliceFirst, aliceWithLeadingSpace)
 	}
 	if strings.Contains(aliceFirst.Name, "alice") || strings.Contains(bob.Name, "bob") {
 		t.Fatalf("derived names reveal actor identifiers: alice=%q bob=%q", aliceFirst.Name, bob.Name)

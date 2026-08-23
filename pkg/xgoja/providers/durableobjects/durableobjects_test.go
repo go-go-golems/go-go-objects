@@ -364,11 +364,18 @@ func TestActorBoundModuleUsesAuthenticatedContextAndIsolatesUsers(t *testing.T) 
 	if err != nil {
 		t.Fatalf("bob read: %v", err)
 	}
+	aliceWithLeadingSpace, err := call(" alice", `require("durableobjects").fetchForActor("COUNTER", { method: "GET", path: "/count" }).body`)
+	if err != nil {
+		t.Fatalf("alice with leading space read: %v", err)
+	}
 	if got := alice.(goja.Value).Export(); got != int64(7) && got != float64(7) && got != 7 {
 		t.Fatalf("alice result=%#v", got)
 	}
 	if got := bob.(goja.Value).Export(); got != "0" {
 		t.Fatalf("bob observed alice state: %#v", got)
+	}
+	if got := aliceWithLeadingSpace.(goja.Value).Export(); got != "0" {
+		t.Fatalf("opaque actor ID was normalized and observed alice state: %#v", got)
 	}
 	if _, err := rt.Owner.Call(ctx, "actor-bound durableobjects without actor", func(_ context.Context, vm *goja.Runtime) (any, error) {
 		return vm.RunString(`require("durableobjects").fetchForActor("COUNTER", { method: "GET", path: "/count" })`)

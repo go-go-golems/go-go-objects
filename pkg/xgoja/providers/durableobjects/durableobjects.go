@@ -428,7 +428,6 @@ func resolveBoundActorID(vm *goja.Runtime, service BoundDispatcherService, ctx c
 	if err != nil {
 		panic(vm.NewGoError(fmt.Errorf("resolve authenticated actor for durableobjects dispatch: %w", err)))
 	}
-	actorID = strings.TrimSpace(actorID)
 	if actorID == "" {
 		panic(vm.NewGoError(fmt.Errorf("actor-bound durableobjects dispatch requires an authenticated planned route")))
 	}

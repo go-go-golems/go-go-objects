@@ -66,7 +66,6 @@ func (b *BoundDispatcher) ObjectIDForActor(namespace, actorID string) (ObjectID,
 	if _, ok := b.namespaces[namespace]; !ok {
 		return ObjectID{}, coded(CodeUnknownNamespace, "namespace is not available through actor-bound dispatch")
 	}
-	actorID = strings.TrimSpace(actorID)
 	if actorID == "" {
 		return ObjectID{}, coded(CodeBadRequest, "actor-bound dispatch requires an actor identifier")
 	}
