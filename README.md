@@ -116,6 +116,8 @@ modules:
     config:
       storageRoot: ./var/durable-objects
       bundlePath: ./objects.js
+      # Required only for the low-level caller-named HTTP gateway.
+      enableRawGateway: true
 ```
 
 For self-contained generated binaries, use embedded xgoja asset IDs instead:
@@ -127,11 +129,17 @@ modules:
     config:
       storageRoot: ./var/durable-objects
       bundleAsset: durableobjects/objects.js
+      # Keep false for actor-bound product routes.
+      enableRawGateway: false
 ```
 
 `manifestPath` and `manifestAsset` are optional. If omitted, namespaces are derived from `exports.objects`.
 
+The raw `gateway()`/`handler()` surface is disabled by default because it accepts a caller-selected namespace and object name. It is appropriate for trusted development tools and low-level services, but it is not an end-user authorization boundary. A product route should inject a host-owned `durableobjects.BoundDispatcher` and actor-ID resolver through `BoundDispatcherService`, then use `rpcForActor(namespace, method, args)` or `fetchForActor(namespace, request)`. Those functions obtain the actor from the already-authenticated planned-route context and derive an opaque HMAC object name; neither JavaScript nor the browser supplies an actor ID or physical object name.
+
 With xgoja/v2 and the shared mountable HTTP handler ABI, the recommended generated-server path is to let JavaScript compose the server:
+
+The following low-level example requires `enableRawGateway: true` in its module configuration:
 
 ```js
 const express = require("express");

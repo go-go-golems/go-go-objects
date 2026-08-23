@@ -30,9 +30,20 @@ const PackageID = "go-go-objects-durableobjects"
 
 const HostServiceKey = "go-go-objects.durableobjects.gateway"
 
+const BoundDispatcherHostServiceKey = "go-go-objects.durableobjects.bound-dispatcher"
+
 type GatewayService struct {
-	Manager *durableobjects.Manager
-	Handler http.Handler
+	Manager          *durableobjects.Manager
+	Handler          http.Handler
+	EnableRawGateway bool
+}
+
+// BoundDispatcherService exposes a host-owned actor-bound dispatcher to the
+// durableobjects module. The module resolves the actor from the authenticated
+// planned-route context; JavaScript cannot choose an actor or object name.
+type BoundDispatcherService struct {
+	Dispatcher *durableobjects.BoundDispatcher
+	ActorID    func(context.Context) (string, error)
 }
 
 func Register(registry *providerapi.ProviderRegistry) error {
@@ -103,6 +114,7 @@ type settings struct {
 	IdleTimeout       string `glazed:"idle-timeout" json:"idleTimeout"`
 	AlarmInterval     string `glazed:"alarm-interval" json:"alarmInterval"`
 	IdleInterval      string `glazed:"idle-interval" json:"idleInterval"`
+	EnableRawGateway  bool   `glazed:"enable-raw-gateway" json:"enableRawGateway"`
 }
 
 type runtimeEntry struct {
@@ -138,6 +150,7 @@ func (c *capability) GlazedConfigSections(providerapi.SectionRequest) ([]schema.
 			fields.New("idle-timeout", fields.TypeString, fields.WithDefault("5m"), fields.WithHelp("Idle actor eviction timeout")),
 			fields.New("alarm-interval", fields.TypeString, fields.WithDefault("1s"), fields.WithHelp("Background alarm scheduler interval; 0 disables the loop")),
 			fields.New("idle-interval", fields.TypeString, fields.WithDefault("1m"), fields.WithHelp("Background idle evictor interval; 0 disables the loop")),
+			fields.New("enable-raw-gateway", fields.TypeBool, fields.WithDefault(false), fields.WithHelp("Expose caller-selected namespace/name gateway APIs; unsafe for end-user product routes")),
 		),
 	)
 	if err != nil {
@@ -162,6 +175,7 @@ func (c *capability) XGojaConfigSection(providerapi.SectionRequest, providerapi.
 			fields.New("idleTimeout", fields.TypeString, fields.WithDefault("5m")),
 			fields.New("alarmInterval", fields.TypeString, fields.WithDefault("1s")),
 			fields.New("idleInterval", fields.TypeString, fields.WithDefault("1m")),
+			fields.New("enableRawGateway", fields.TypeBool, fields.WithDefault(false)),
 		),
 	)
 }
@@ -179,13 +193,14 @@ func (c *capability) XGojaConfigFromGlazed(_ context.Context, req providerapi.XG
 		return out, nil
 	}
 	copies := map[string]string{
-		"storage-root":   "storageRoot",
-		"bundle-path":    "bundlePath",
-		"manifest-path":  "manifestPath",
-		"cpu-timeout":    "cpuTimeout",
-		"idle-timeout":   "idleTimeout",
-		"alarm-interval": "alarmInterval",
-		"idle-interval":  "idleInterval",
+		"storage-root":       "storageRoot",
+		"bundle-path":        "bundlePath",
+		"manifest-path":      "manifestPath",
+		"cpu-timeout":        "cpuTimeout",
+		"idle-timeout":       "idleTimeout",
+		"alarm-interval":     "alarmInterval",
+		"idle-interval":      "idleInterval",
+		"enable-raw-gateway": "enableRawGateway",
 	}
 	for publicName, configName := range copies {
 		field, ok := req.GlazedValues.GetField("durableobjects", publicName)
@@ -224,11 +239,18 @@ func (c *capability) InitRuntimeFromSections(ctx context.Context, vals *values.V
 }
 
 func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (require.ModuleLoader, error) {
-	configuredCtx, configuredCancel := context.WithCancel(context.Background())
-	configured, err := gatewayServiceFromModuleConfig(configuredCtx, ctx.Host, ctx.Config)
+	external, err := externalGatewayService(ctx.Host)
 	if err != nil {
-		configuredCancel()
 		return nil, err
+	}
+	configuredCtx, configuredCancel := context.WithCancel(context.Background())
+	configured := GatewayService{}
+	if external.Manager == nil {
+		configured, err = gatewayServiceFromModuleConfig(configuredCtx, ctx.Host, ctx.Config)
+		if err != nil {
+			configuredCancel()
+			return nil, err
+		}
 	}
 	if configured.Manager == nil {
 		configuredCancel()
@@ -243,7 +265,7 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			return nil, err
 		}
 	}
-	external, err := externalGatewayService(ctx.Host)
+	bound, err := externalBoundDispatcherService(ctx.Host)
 	if err != nil {
 		configuredCancel()
 		return nil, err
@@ -257,6 +279,7 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 		entry := c.entry(vm)
 		entry.mu.Lock()
 		manager := entry.manager
+		rawGatewayEnabled := configured.EnableRawGateway
 		if configured.Manager != nil {
 			manager = configured.Manager
 			entry.manager = manager
@@ -267,8 +290,9 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			manager = external.Manager
 			entry.manager = manager
 			entry.gateway = external.Handler
+			rawGatewayEnabled = external.EnableRawGateway
 		}
-		if manager != nil && httpHost != nil && !entry.gatewayMounted {
+		if rawGatewayEnabled && manager != nil && httpHost != nil && !entry.gatewayMounted {
 			if entry.gateway == nil {
 				entry.gateway = durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true})
 			}
@@ -302,10 +326,12 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			}
 			return vm.ToValue(value)
 		})
-		_ = exports.Set("fetch", func(namespace, name string, request durableobjects.FetchRequest) goja.Value {
+		_ = exports.Set("fetch", func(namespace, name string, input any) goja.Value {
 			if manager == nil {
 				panic(vm.NewGoError(fmt.Errorf("durableobjects manager is not initialized")))
 			}
+			var request durableobjects.FetchRequest
+			decodeJSONValue(vm, input, &request)
 			id, err := durableobjects.NewObjectID(namespace, name)
 			if err != nil {
 				panic(vm.NewGoError(err))
@@ -314,9 +340,48 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 			if err != nil {
 				panic(vm.NewGoError(err))
 			}
-			return vm.ToValue(result.Response)
+			return jsonValue(vm, result.Response)
+		})
+		_ = exports.Set("rpcForActor", func(namespace, method string, args []any) goja.Value {
+			if bound.Dispatcher == nil {
+				panic(vm.NewGoError(fmt.Errorf("actor-bound durableobjects dispatcher is not configured")))
+			}
+			callCtx := runtimebridge.CurrentOwnerContext(vm)
+			actorID := resolveBoundActorID(vm, bound, callCtx)
+			payload, err := json.Marshal(args)
+			if err != nil {
+				panic(vm.NewGoError(err))
+			}
+			result, err := bound.Dispatcher.RPCForActor(callCtx, actorID, namespace, method, payload)
+			if err != nil {
+				panic(vm.NewGoError(err))
+			}
+			var value any
+			if len(result.ValueJSON) > 0 {
+				if err := json.Unmarshal(result.ValueJSON, &value); err != nil {
+					panic(vm.NewGoError(err))
+				}
+			}
+			return vm.ToValue(value)
+		})
+		_ = exports.Set("fetchForActor", func(namespace string, input any) goja.Value {
+			if bound.Dispatcher == nil {
+				panic(vm.NewGoError(fmt.Errorf("actor-bound durableobjects dispatcher is not configured")))
+			}
+			var request durableobjects.FetchRequest
+			decodeJSONValue(vm, input, &request)
+			callCtx := runtimebridge.CurrentOwnerContext(vm)
+			actorID := resolveBoundActorID(vm, bound, callCtx)
+			result, err := bound.Dispatcher.FetchForActor(callCtx, actorID, namespace, &request)
+			if err != nil {
+				panic(vm.NewGoError(err))
+			}
+			return jsonValue(vm, result.Response)
 		})
 		mountableGateway := func() goja.Value {
+			if !rawGatewayEnabled {
+				panic(vm.NewGoError(fmt.Errorf("raw durableobjects gateway is disabled")))
+			}
 			if manager == nil {
 				panic(vm.NewGoError(fmt.Errorf("durableobjects manager is not initialized")))
 			}
@@ -334,6 +399,39 @@ func (c *capability) newModuleLoader(ctx providerapi.ModuleSetupContext) (requir
 		_ = exports.Set("gateway", mountableGateway)
 		_ = exports.Set("handler", mountableGateway)
 	}, nil
+}
+
+func jsonValue(vm *goja.Runtime, value any) goja.Value {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(vm.NewGoError(err))
+	}
+	var normalized any
+	if err := json.Unmarshal(data, &normalized); err != nil {
+		panic(vm.NewGoError(err))
+	}
+	return vm.ToValue(normalized)
+}
+
+func decodeJSONValue(vm *goja.Runtime, value any, target any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(vm.NewGoError(err))
+	}
+	if err := json.Unmarshal(data, target); err != nil {
+		panic(vm.NewGoError(err))
+	}
+}
+
+func resolveBoundActorID(vm *goja.Runtime, service BoundDispatcherService, ctx context.Context) string {
+	actorID, err := service.ActorID(ctx)
+	if err != nil {
+		panic(vm.NewGoError(fmt.Errorf("resolve authenticated actor for durableobjects dispatch: %w", err)))
+	}
+	if actorID == "" {
+		panic(vm.NewGoError(fmt.Errorf("actor-bound durableobjects dispatch requires an authenticated planned route")))
+	}
+	return actorID
 }
 
 func (c *capability) entry(vm *goja.Runtime) *runtimeEntry {
@@ -414,7 +512,11 @@ func newGatewayServiceFromSettings(ctx context.Context, host providerapi.HostSer
 	if err != nil {
 		return GatewayService{}, err
 	}
-	service := GatewayService{Manager: manager, Handler: durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true})}
+	service := GatewayService{
+		Manager:          manager,
+		Handler:          durableobjects.NewGateway(manager, durableobjects.GatewayOptions{DevErrors: true}),
+		EnableRawGateway: cfg.EnableRawGateway,
+	}
 	if alarmInterval, err := parseDurationSetting("alarm-interval", cfg.AlarmInterval); err != nil {
 		_ = manager.Close(ctx)
 		return GatewayService{}, err
@@ -552,6 +654,28 @@ func externalGatewayService(hostServices providerapi.HostServices) (GatewayServi
 	return service, nil
 }
 
+func externalBoundDispatcherService(hostServices providerapi.HostServices) (BoundDispatcherService, error) {
+	lookup, ok := hostServices.(providerapi.HostServiceLookup)
+	if !ok || lookup == nil {
+		return BoundDispatcherService{}, nil
+	}
+	raw, ok := lookup.HostService(BoundDispatcherHostServiceKey)
+	if !ok {
+		return BoundDispatcherService{}, nil
+	}
+	service, ok := raw.(BoundDispatcherService)
+	if !ok {
+		return BoundDispatcherService{}, fmt.Errorf("durableobjects host service %q must be BoundDispatcherService, got %T", BoundDispatcherHostServiceKey, raw)
+	}
+	if service.Dispatcher == nil {
+		return BoundDispatcherService{}, fmt.Errorf("durableobjects host service %q has nil Dispatcher", BoundDispatcherHostServiceKey)
+	}
+	if service.ActorID == nil {
+		return BoundDispatcherService{}, fmt.Errorf("durableobjects host service %q has nil ActorID resolver", BoundDispatcherHostServiceKey)
+	}
+	return service, nil
+}
+
 func externalHTTPHost(hostServices providerapi.HostServices) (*gojahttp.Host, error) {
 	lookup, ok := hostServices.(providerapi.HostServiceLookup)
 	if !ok || lookup == nil {
@@ -639,7 +763,8 @@ func moduleConfigSchema() json.RawMessage {
     "cpuTimeout": {"type": "string", "description": "Per-dispatch JavaScript CPU/Promise settlement timeout"},
     "idleTimeout": {"type": "string", "description": "Idle actor eviction timeout"},
     "alarmInterval": {"type": "string", "description": "Background alarm scheduler interval; 0 disables the loop"},
-    "idleInterval": {"type": "string", "description": "Background idle evictor interval; 0 disables the loop"}
+    "idleInterval": {"type": "string", "description": "Background idle evictor interval; 0 disables the loop"},
+    "enableRawGateway": {"type": "boolean", "description": "Expose caller-selected namespace/name gateway APIs; unsafe for product routes"}
   }
 }`)
 }
@@ -655,7 +780,13 @@ func TypeScriptModule() *spec.Module {
 			"export function rpc(namespace: string, name: string, method: string, args?: unknown[]): unknown;",
 			"/** Dispatches fetch to an object and blocks until any returned object-handler Promise settles. */",
 			"export function fetch(namespace: string, name: string, request: FetchRequest): FetchResponse;",
+			"/** Dispatches RPC to the current authenticated actor's private object. Only available in a planned route with a host-provided bound dispatcher. */",
+			"export function rpcForActor(namespace: string, method: string, args?: unknown[]): unknown;",
+			"/** Dispatches fetch to the current authenticated actor's private object. Only available in a planned route with a host-provided bound dispatcher. */",
+			"export function fetchForActor(namespace: string, request: FetchRequest): FetchResponse;",
+			"/** Returns the raw caller-named gateway only when enableRawGateway is explicitly true. */",
 			"export function gateway(): MountableHTTPHandler;",
+			"/** Alias for gateway(). */",
 			"export function handler(): MountableHTTPHandler;",
 		},
 	}
